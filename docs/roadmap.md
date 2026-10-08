@@ -242,10 +242,11 @@ GitHub
              实际测速流量直连
 ```
 
-- `[待处理]` 创建 GitHub 仓库和首个 Probe Release。
+- `[完成]` 创建公开 GitHub 仓库、私有 Core 仓库并通过首次 CI。
+- `[待处理]` 创建首个签名 Probe 与 `sq-node` Release。
 - `[待处理]` 离线生成发布 Ed25519 密钥，将私钥配置为 Actions Secret、公钥配置为 Actions Variable。
 - `[待处理]` 配置 Cloudflare 域名、公开 Worker、D1、R2、迁移、Secret 和自动部署。
-- `[待处理]` 把 `private/node-core` 保存到独立私有仓库或可靠备份后再发布公开仓库。
+- `[完成]` 将 Node Core 保存到独立私有仓库 `speedquality-node-core`。
 - `[说明]` 美西服务器不承担测速流量，当前架构不要求在其上部署 Node Core；可用于监控、备份或
   后续独立控制面。
 

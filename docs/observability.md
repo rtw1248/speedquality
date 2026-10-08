@@ -65,12 +65,11 @@ sudo journalctl -u speedquality-node.service -o cat -n 200
 
 两个 Worker 的 `wrangler.toml` 默认设置 `LOG_LEVEL = "info"`。实时查看：
 
-```bash
-cd deploy/cloudflare-worker
-npx wrangler tail --format json
+在公开仓库根目录执行：
 
-cd private/node-core
-npx wrangler tail --format json
+```bash
+(cd deploy/cloudflare-worker && npx wrangler tail --format json)
+(cd ../speedquality-node-core && npx wrangler tail --format json)
 ```
 
 排查并发容量时先在公开 Worker 搜索 `lease.delivered`，再用相同 `request_id` 查看 Core 的
