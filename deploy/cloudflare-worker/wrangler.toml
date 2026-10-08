@@ -1,0 +1,48 @@
+name = "speedquality"
+main = "src/index.js"
+compatibility_date = "2026-09-26"
+workers_dev = true
+
+[triggers]
+crons = ["17 3 * * *"]
+
+# 如需自定义域名，取消下一行注释并换成自己的域名。
+# routes = [{ pattern = "sq.yolo2.cc", custom_domain = true }]
+
+[vars]
+LOG_LEVEL = "info"
+GITHUB_OWNER = "YOUR_GITHUB_USER"
+GITHUB_REPO = "speedquality"
+GITHUB_REF = "v1.0.0"
+RESULT_TTL_DAYS = "90"
+DAILY_RESULT_LIMIT = "100"
+DAILY_SESSION_LIMIT = "20"
+NQ_BINDING_ENABLED = "false"
+PROBE_VERSION = "v1.0.0"
+PROMOTION_TEXT = "SpeedQuality 社区节点计划"
+# PROMOTION_URL = "https://github.com/YOUR_GITHUB_USER/speedquality"
+
+# 自用部署不需要 Service Binding，使用 `wrangler secret put STATIC_NODES` 配置自建节点。
+# 官方动态节点服务取消下面三行注释，并配置同名 Worker。
+# [[services]]
+# binding = "NODE_CORE"
+# service = "speedquality-node-core"
+
+# 先运行 `npx wrangler d1 create speedquality-results`，再取消下面各行注释并填写 ID。
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "speedquality-results"
+# database_id = "YOUR_D1_DATABASE_ID"
+# migrations_dir = "migrations"
+
+# 先运行 `npx wrangler r2 bucket create speedquality-nodequality`，再取消下面各行注释。
+# [[r2_buckets]]
+# binding = "SNAPSHOTS"
+# bucket_name = "speedquality-nodequality"
+
+# Required secrets:
+#   wrangler secret put RATE_LIMIT_SALT
+# Self-hosted static mode:
+#   wrangler secret put STATIC_NODES
+# Dynamic Provider mode:
+#   wrangler secret put NODE_CORE_SECRET

@@ -1,0 +1,10 @@
+*.log
+.cache/
+deploy/cloudflare-worker/node_modules/
+deploy/cloudflare-worker/.wrangler/
+deploy/cloudflare-worker/.venv/
+deploy/cloudflare-worker/preview/*.html
+/private/
+/resources/
+/dist/
+/probe/probe

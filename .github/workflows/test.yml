@@ -1,0 +1,113 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+      - name: Test probe
+        working-directory: probe
+        run: go test ./...
+      - name: Vet probe
+        working-directory: probe
+        run: go vet ./...
+      - name: Build probe
+        working-directory: probe
+        run: CGO_ENABLED=0 go build ./...
+  sq-node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+      - name: Test node server
+        working-directory: sq-node
+        run: go test ./...
+      - name: Race test node server
+        working-directory: sq-node
+        run: go test -race ./...
+      - name: Vet node server
+        working-directory: sq-node
+        run: go vet ./...
+      - name: Build node server
+        working-directory: sq-node
+        run: CGO_ENABLED=0 go build ./...
+      - name: Build release manifest signer
+        run: go build -o /tmp/speedquality-release-manifest ./tools/release-manifest/main.go
+  bash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: Check shell syntax
+        run: bash -n run.sh install-node.sh deploy/cloudflare-worker/preview-local.sh tests/test.sh tests/fixtures/*.sh
+      - name: Run ShellCheck
+        run: shellcheck run.sh install-node.sh deploy/cloudflare-worker/preview-local.sh tests/test.sh tests/fixtures/*.sh
+      - name: Run tests
+        run: bash tests/test.sh
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check Worker syntax
+        run: >-
+          node --check deploy/cloudflare-worker/src/index.js &&
+          node --check deploy/cloudflare-worker/src/observability.js &&
+          node --check deploy/cloudflare-worker/preview.js
+      - name: Run Worker tests
+        run: npm test
+        working-directory: deploy/cloudflare-worker
+      - name: Run fixture Provider tests
+        run: node --test test/*.test.js
+        working-directory: examples/fixture-provider
+      - name: Validate D1 migration
+        run: |
+          python3 - <<'PY'
+          import sqlite3
+          from pathlib import Path
+
+          database = sqlite3.connect(":memory:")
+          for migration in sorted(Path("deploy/cloudflare-worker/migrations").glob("*.sql")):
+              database.executescript(migration.read_text())
+          tables = {row[0] for row in database.execute(
+              "SELECT name FROM sqlite_master WHERE type = 'table'"
+          )}
+          assert {
+              "reports", "rate_limits", "sessions", "session_leases",
+              "session_rate_limits",
+          } <= tables
+          report_columns = {
+              row[1] for row in database.execute("PRAGMA table_info(reports)")
+          }
+          session_columns = {
+              row[1] for row in database.execute("PRAGMA table_info(sessions)")
+          }
+          lease_columns = {
+              row[1] for row in database.execute("PRAGMA table_info(session_leases)")
+          }
+          assert "target_mbps" in report_columns
+          assert "target_mbps" in session_columns
+          assert "community_node_id" in session_columns
+          assert "preparation_id" in lease_columns
+          PY
+      - name: Install locked Worker dependencies
+        run: npm ci
+        working-directory: deploy/cloudflare-worker
+      - name: Build Worker
+        run: npm run check
+        working-directory: deploy/cloudflare-worker

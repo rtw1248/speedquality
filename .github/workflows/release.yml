@@ -1,0 +1,48 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+      - name: Test probe
+        working-directory: probe
+        run: go test ./...
+      - name: Test node server
+        working-directory: sq-node
+        run: go test ./...
+      - name: Build release binaries
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_PUBLIC_KEY: ${{ vars.SQ_RELEASE_PUBLIC_KEY }}
+          CGO_ENABLED: "0"
+        run: |
+          test -n "$RELEASE_PUBLIC_KEY"
+          mkdir -p dist
+          cd probe
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$RELEASE_VERSION" -o ../dist/sqprobe-linux-amd64 .
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$RELEASE_VERSION" -o ../dist/sqprobe-linux-arm64 .
+          cd ../sq-node
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$RELEASE_VERSION -X main.releasePublicKeyBase64=$RELEASE_PUBLIC_KEY" -o ../dist/sq-node-linux-amd64 .
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$RELEASE_VERSION -X main.releasePublicKeyBase64=$RELEASE_PUBLIC_KEY" -o ../dist/sq-node-linux-arm64 .
+          cd ../dist
+          sha256sum sqprobe-linux-amd64 sqprobe-linux-arm64 sq-node-linux-amd64 sq-node-linux-arm64 > checksums.txt
+      - name: Sign release manifest
+        env:
+          SQ_RELEASE_PRIVATE_KEY: ${{ secrets.SQ_RELEASE_PRIVATE_KEY }}
+        run: go run ./tools/release-manifest/main.go -dir dist -version "${{ github.ref_name }}"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes --verify-tag

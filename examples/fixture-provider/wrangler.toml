@@ -1,0 +1,13 @@
+name = "speedquality-fixture-provider"
+main = "src/index.js"
+compatibility_date = "2026-09-26"
+
+[vars]
+INTERNAL_SECRET = "fixture-development-secret"
+FIXTURE_NODES = '''
+{
+  "bj": [],
+  "sh": [],
+  "gd": []
+}
+'''
