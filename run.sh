@@ -282,7 +282,7 @@ normalize_regions() {
     if ! code=$(region_code_from_token "$token"); then
       if hint=$(city_province_hint "$token" 2>/dev/null); then
         IFS='|' read -r hint_code hint_name <<< "$hint"
-        die "“$token”是城市名称，SpeedQuality 按省级地区测速；请使用 -p $hint_code 或 -p $hint_name"
+        die "'$token' 是城市名称，SpeedQuality 按省级地区测速；请使用 -p $hint_code 或 -p $hint_name"
       fi
       die "不支持的省级地区: $token（使用 --list-provinces 查看代码）"
     fi

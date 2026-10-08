@@ -481,7 +481,7 @@ test_chinese_provinces_and_city_rejection() {
   if report_env bash "$RUNNER" -p 武汉 >"$TEST_DIR/city.out" 2>&1; then
     fail '城市名称被静默转换为省份'
   fi
-  assert_contains "$TEST_DIR/city.out" '“武汉”是城市名称'
+  assert_contains "$TEST_DIR/city.out" "'武汉' 是城市名称"
   assert_contains "$TEST_DIR/city.out" '-p hb 或 -p 湖北'
 
   bash "$RUNNER" --list-provinces >"$TEST_DIR/provinces.out" 2>&1
