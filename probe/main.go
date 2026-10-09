@@ -63,7 +63,14 @@ func main() {
 	if diagnosticFile != nil {
 		defer diagnosticFile.Close()
 	}
-	report := runLease(ctx, lease)
+	progress := newProgressTracker(
+		os.Stderr,
+		len(lease.Targets)*3,
+		fmt.Sprintf("%s %s", lease.Region.Name, displayFamily(lease.Family)),
+		terminalProgressEnabled(),
+	)
+	report := runLease(ctx, lease, progress)
+	progress.Finish("测速完成")
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[X] 无法生成结果: %v\n", err)

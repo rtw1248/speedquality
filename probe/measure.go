@@ -164,7 +164,9 @@ type preparedTarget struct {
 	activatedAt time.Time
 }
 
-func runLease(ctx context.Context, lease Lease) Report {
+type transferProgress func(completed int, stage string)
+
+func runLease(ctx context.Context, lease Lease, progress *progressTracker) Report {
 	started := time.Now()
 	diagnostic(ctx, slog.LevelInfo, "lease.started",
 		"lease_id", lease.LeaseID,
@@ -183,9 +185,17 @@ func runLease(ctx context.Context, lease Lease) Report {
 		TargetMbps:      lease.TargetMbps,
 		Modes:           append([]string(nil), lease.Modes...),
 	}
-	for _, target := range lease.Targets {
+	for index, target := range lease.Targets {
+		baseProgress := index * 3
+		progress.Update(baseProgress, target.Label+" / 连接节点")
 		prepared := prepareTarget(ctx, lease.Family, target)
-		report.Results = append(report.Results, runPreparedTarget(ctx, lease, prepared))
+		updateProgress := func(completed int, stage string) {
+			progress.Update(baseProgress+completed, target.Label+" / "+stage)
+		}
+		report.Results = append(
+			report.Results,
+			runPreparedTarget(ctx, lease, prepared, updateProgress),
+		)
 		if prepared.key != "" {
 			if err := releaseCandidate(prepared.candidate, prepared.key); err != nil {
 				diagnostic(ctx, slog.LevelWarn, "candidate.release_failed",
@@ -270,11 +280,18 @@ func prepareTarget(ctx context.Context, family string, target TargetGroup) prepa
 	return preparedTarget{result: result}
 }
 
-func runPreparedTarget(ctx context.Context, lease Lease, prepared preparedTarget) MeasurementResult {
+func runPreparedTarget(
+	ctx context.Context,
+	lease Lease,
+	prepared preparedTarget,
+	progress transferProgress,
+) MeasurementResult {
 	result := prepared.result
 	if prepared.key == "" {
+		progress(3, "节点不可用")
 		return result
 	}
+	progress(1, "等待节点")
 	readyAt := prepared.activatedAt.Add(
 		time.Duration(prepared.candidate.Activate.ReadyDelayMillis) * time.Millisecond,
 	)
@@ -288,6 +305,7 @@ func runPreparedTarget(ctx context.Context, lease Lease, prepared preparedTarget
 		case <-timer.C:
 		}
 	}
+	progress(1, "下载测速")
 	diagnostic(ctx, slog.LevelInfo, "transfer.started",
 		"lease_id", lease.LeaseID,
 		"node_id", prepared.candidate.ID,
@@ -307,6 +325,7 @@ func runPreparedTarget(ctx context.Context, lease Lease, prepared preparedTarget
 		"bytes", downBytes,
 		"mbps", round(downMbps, 2),
 	)
+	progress(2, "上传测速")
 	diagnostic(ctx, slog.LevelInfo, "transfer.started",
 		"lease_id", lease.LeaseID,
 		"node_id", prepared.candidate.ID,
@@ -326,6 +345,7 @@ func runPreparedTarget(ctx context.Context, lease Lease, prepared preparedTarget
 		"bytes", upBytes,
 		"mbps", round(upMbps, 2),
 	)
+	progress(3, "完成")
 	result.Single = &ModeResult{
 		DownloadMbps:  round(downMbps, 2),
 		UploadMbps:    round(upMbps, 2),

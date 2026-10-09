@@ -179,7 +179,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.5").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.6").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
