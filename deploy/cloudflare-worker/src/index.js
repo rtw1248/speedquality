@@ -2097,7 +2097,8 @@ function speedReportIntroduction(report, projectUrl) {
   if (normalizedProjectUrl) links.push({ label: "GitHub 项目链接", url: normalizedProjectUrl });
   links.push({ label: "参考项目：Taier 测速", url: "https://github.com/MiaM1ku/taierspeedtest" });
   return {
-    title: "SpeedQuality —— 分省三网，实测上下行",
+    title: "SpeedQuality",
+    tagline: "分省三网，实测上下行",
     links,
     network: [
       network.asn ? [`AS${network.asn}`, network.organization].filter(Boolean).join(" ") : "",
@@ -2112,7 +2113,7 @@ function renderSpeedReportIntroduction(report, projectUrl) {
     `<a href="${escapeHtml(link.url)}" rel="noreferrer">${escapeHtml(link.label)}</a>`
   ).join(' <span aria-hidden="true">|</span> ');
   return `<div class="sq-report-intro">
-        <h1>${escapeHtml(intro.title)}</h1>
+        <h1><span>${escapeHtml(intro.title)} ——</span> <span>${escapeHtml(intro.tagline)}</span></h1>
         <p class="sq-report-links">${links}</p>
         <p class="sq-report-network">${escapeHtml(intro.network)}</p>
       </div>`;
@@ -2132,7 +2133,7 @@ function speedReportHeaderText(report, options = {}) {
   const lines = [ansiText("#".repeat(80), "36", colored)];
   if (options.includeIntroduction !== false) {
     const intro = speedReportIntroduction(report, options.projectUrl);
-    lines.push(ansiText(centerDisplay(intro.title), "1;96", colored));
+    lines.push(ansiText(centerDisplay(`${intro.title} —— ${intro.tagline}`), "1;96", colored));
     for (const link of intro.links) {
       const label = `${link.label}：${link.url}`;
       lines.push(centerIndent(label) + ansiText(`${link.label}：`, "36", colored) +
@@ -2513,7 +2514,8 @@ export function renderReport(report, options = {}) {
     .notice.danger { border-color:var(--danger); background:var(--dangerbg); color:var(--danger); font-weight:650; }
     .report-pane { padding:0; }
     .sq-report-intro { margin:8px 0 12px; text-align:center; overflow-wrap:anywhere; }
-    .sq-report-intro h1 { color:#75b8a6; font-size:18px; font-weight:600; line-height:1.5; text-wrap:balance; }
+    .sq-report-intro h1 { color:#75b8a6; font-size:18px; font-weight:600; line-height:1.5; }
+    .sq-report-intro h1 span { display:inline-block; }
     .sq-report-intro p { margin:4px 0 0; }
     .sq-report-links { color:var(--muted); font-size:13px; }
     .sq-report-links a { color:#70a598; }

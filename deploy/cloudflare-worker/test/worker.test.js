@@ -1316,7 +1316,7 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
     page,
     /<a href="https:\/\/github\.com\/owner\/speedquality" rel="noreferrer">GitHub 项目链接<\/a>/,
   );
-  assert.match(page, /<h1>SpeedQuality —— 分省三网，实测上下行<\/h1>/);
+  assert.match(page, /<h1><span>SpeedQuality ——<\/span> <span>分省三网，实测上下行<\/span><\/h1>/);
   assert.match(page, /<a href="https:\/\/github\.com\/MiaM1ku\/taierspeedtest" rel="noreferrer">参考项目：Taier 测速<\/a>/);
   assert.match(page, /<p class="sq-report-network">IP: 203\.0\.\*\.\*<\/p>/);
   assert.doesNotMatch(page, /AS0\b/);
