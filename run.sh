@@ -431,16 +431,14 @@ json_string_field() {
 detect_auto_region() {
   local response_file="$TEMP_DIR/ssh-geo.json"
   local region_code country_code mapped
-  local quiet="${1:-}"
 
   SSH_CLIENT_IP=$(extract_ssh_client_ip || true)
   if [[ -z "$SSH_CLIENT_IP" ]]; then
-    [[ "$quiet" == "quiet" ]] || warn "没有检测到 SSH 客户端 IP"
+    warn "没有检测到 SSH 客户端 IP"
     return 1
   fi
   if private_ip_literal "$SSH_CLIENT_IP"; then
-    [[ "$quiet" == "quiet" ]] || \
-      warn "SSH 来源 $SSH_CLIENT_IP 是内网地址，无法自动定位"
+    warn "SSH 来源 $SSH_CLIENT_IP 是内网地址，无法自动定位"
     return 1
   fi
 
@@ -452,7 +450,7 @@ detect_auto_region() {
     validate_https_url "$GEO_API" || die "地区检测 API 地址不合法"
     if ! curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --connect-timeout 5 --max-time 15 \
       "${GEO_API%/}/$SSH_CLIENT_IP" -o "$response_file"; then
-      [[ "$quiet" == "quiet" ]] || warn "无法查询 SSH 来源 $SSH_CLIENT_IP 的地区"
+      warn "无法查询 SSH 来源 $SSH_CLIENT_IP 的地区"
       return 1
     fi
   fi
@@ -465,20 +463,17 @@ detect_auto_region() {
     cn) ;;
     hk|mo|tw) region_code="$country_code" ;;
     *)
-      [[ "$quiet" == "quiet" ]] || \
-        warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内"
+      warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内"
       return 1
       ;;
   esac
   mapped=$(region_code_from_token "$region_code" || true)
   if [[ -z "$mapped" ]]; then
-    [[ "$quiet" == "quiet" ]] || \
-      warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内"
+    warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内"
     return 1
   fi
   if ! public_region_supported "$mapped"; then
-    [[ "$quiet" == "quiet" ]] || \
-      warn "SSH 来源地区 $(region_name "$mapped") 暂未开放公共测速"
+    warn "SSH 来源地区 $(region_name "$mapped") 暂未开放公共测速"
     return 1
   fi
   AUTO_REGION_CODE="$mapped"
