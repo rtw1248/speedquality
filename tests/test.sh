@@ -313,6 +313,25 @@ test_ip_family_selection() {
   pass '默认自动测试可用地址族，-v4/-v6 仅测指定类型且互斥'
 }
 
+test_partial_failure_keeps_compact_table() {
+  local args="$TEST_DIR/partial-failure-args.txt"
+  local output="$TEST_DIR/partial-failure.out"
+  report_env SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=1 \
+    MOCK_ARGS_FILE="$args" MOCK_FAILED_FAMILY=v4 \
+    bash "$RUNNER" -p hb >"$output" 2>&1
+  assert_line "$args" 'hb v4'
+  assert_line "$args" 'hb v6'
+  [[ "$(wc -l < "$args")" -eq 2 ]] || fail '测速失败后重复执行了测速'
+  assert_contains "$output" '失败'
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
+  assert_not_contains "$output" '[失败]'
+  assert_not_contains "$output" '上传未产生有效数据'
+  assert_not_contains "$output" '测速失败；'
+  assert_not_contains "$output" '报告会保留失败状态'
+  assert_not_contains "$output" '测速程序异常退出'
+  pass '部分失败只展示表格单元格，继续其它任务且不重复测速'
+}
+
 test_default_dual_uses_family_bound_sessions() {
   local mock_bin="$TEST_DIR/mock-platform-bin"
   local log="$TEST_DIR/platform-family.log"
@@ -391,7 +410,7 @@ test_node_directory_error_is_explained_without_retry() {
   fi
 
   assert_contains "$output" '湖北/v4 当前地区暂无可用测速节点（node_directory_unavailable）'
-  assert_contains "$output" '请根据上方节点提示调整地区、IP 类型或稍后重试'
+  assert_contains "$output" '未取得完整测速结果；请调整地区、IP 类型或稍后重试'
   [[ "$(grep -Fc 'lease v4 ' "$log")" == "1" ]] \
     || fail '节点目录为空时不应立即重试'
   assert_not_contains "$output" '将重试节点调度'
@@ -558,7 +577,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.13" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.14" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -898,7 +917,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.13|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.14|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -912,8 +931,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.13'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.13'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.14'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.14'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
@@ -954,6 +973,7 @@ test_short_province_and_default_speed
 test_auto_ssh_region
 test_speed_aliases_and_validation
 test_ip_family_selection
+test_partial_failure_keeps_compact_table
 test_default_dual_uses_family_bound_sessions
 test_ipv6_only_uses_v6_control_plane
 test_node_directory_error_is_explained_without_retry

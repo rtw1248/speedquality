@@ -182,7 +182,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.13").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.14").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -2001,9 +2001,6 @@ function renderStructuredSpeedText(value, options = {}) {
           ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps, failed), colored),
         ];
         lines.push(columns.join("  "));
-        if (failed && result.error && !unavailable) {
-          lines.push(ansiText(`  [失败] ${carrier}：${result.error}`, "1;91", colored));
-        }
       }
     }
     return lines.join("\n");

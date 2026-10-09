@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.0.13"
-readonly FALLBACK_PROBE_VERSION="v1.0.13"
+readonly SPEEDQUALITY_VERSION="1.0.14"
+readonly FALLBACK_PROBE_VERSION="v1.0.14"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -1495,7 +1495,7 @@ run_speedtest() {
   local status attempt region family lease_file attempt_result
   local -a diagnostic_args
   local traffic_before=""
-  local completed=0 failed=0
+  local completed=0
   local -a region_codes
 
   TRAFFIC_INTERFACES=$(detect_traffic_interfaces || true)
@@ -1546,23 +1546,16 @@ run_speedtest() {
           completed=$((completed + 1))
         elif [[ -s "$attempt_result" ]]; then
           cat "$attempt_result" >> "$SPEED_DATA_FILE"
-        fi
-        if ((status != 0)); then
-          warn "${region}/${family} 测速失败；为避免重复消耗流量，本次不重新执行完整测速"
+        else
+          warn "$(region_name "$region")/${family} 测速程序异常退出（${status}）"
         fi
         break
       done
-      if ((status != 0)); then
-        failed=$((failed + 1))
-      fi
     done
   done
 
   finish_traffic_measurement "$traffic_before"
-  ((completed > 0)) || die "所有测速任务均失败；请根据上方节点提示调整地区、IP 类型或稍后重试"
-  if ((failed > 0)); then
-    warn "$failed 个地区/IP 类型测速失败，报告会保留失败状态"
-  fi
+  ((completed > 0)) || die "未取得完整测速结果；请调整地区、IP 类型或稍后重试"
   SPEED_TEST_EPOCH=$(measurement_epoch)
 }
 

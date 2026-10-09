@@ -155,9 +155,6 @@ func printReport(writer io.Writer, report Report) {
 				{upload, 18, "right", red},
 				{download, 18, "right", red},
 			}, reset)
-			if !unavailable {
-				fmt.Fprintf(writer, "  %s[失败] %s：%s%s\n", red, carrier, result.Error, reset)
-			}
 			continue
 		}
 		download, upload := "-", "-"

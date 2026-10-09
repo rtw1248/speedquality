@@ -44,15 +44,16 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 	for _, expected := range []string{
 		"    IPv4        延迟          单线程上传          单线程下载",
 		"    电信         8ms          150.50Mbps           200Mbps ✓",
-		"[失败] 联通：节点不可用",
+		"    联通           -                失败                失败",
 		"    移动           -                   -                   -",
 	} {
 		if !strings.Contains(plain, expected) {
 			t.Fatalf("plain report lacks %q:\n%s", expected, plain)
 		}
 	}
-	if strings.Contains(plain, "[失败] 移动") || strings.Contains(plain, "没有可连接的候选节点") {
-		t.Fatalf("unavailable node should remain a compact table row:\n%s", plain)
+	if strings.Contains(plain, "[失败]") || strings.Contains(plain, "没有可连接的候选节点") ||
+		strings.Contains(plain, "节点不可用") {
+		t.Fatalf("failed nodes should remain compact table rows:\n%s", plain)
 	}
 	if displayWidth("湖北电信") != 8 || displayWidth(padDisplay("湖北电信", 12, "right")) != 12 {
 		t.Fatal("Chinese display width padding is incorrect")
@@ -71,9 +72,9 @@ func TestPrintReportKeepsPartialMeasurementsVisible(t *testing.T) {
 	var output bytes.Buffer
 	printReport(&output, report)
 	plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(output.String(), "")
-	if !strings.Contains(plain, "21ms") || !strings.Contains(plain, "123.45Mbps") ||
-		!strings.Contains(plain, "上传未产生有效数据") {
-		t.Fatalf("partial failure details were hidden: %q", plain)
+	if !strings.Contains(plain, "    电信        21ms                失败          123.45Mbps") ||
+		strings.Contains(plain, "上传未产生有效数据") || strings.Contains(plain, "[失败]") {
+		t.Fatalf("partial failure should fit in a single row: %q", plain)
 	}
 }
 

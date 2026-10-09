@@ -41,11 +41,24 @@ fi
 
 now="${reference_time:-$(date +%s)}"
 target_mbps="${MOCK_TARGET_MBPS:-200}"
-printf '{"version":1,"lease_id":"lease_mock_%s_%s","started_at":%s,"completed_at":%s,"region":{"code":"%s","name":"%s"},"family":"%s","duration_seconds":5,"target_mbps":%s,"modes":["s"],"results":[{"carrier":"ct","label":"%s电信","node_id":"0123456789abcdef0123456789abcdef","latency_ms":8.25,"status":"ok","single":{"download_mbps":199.20,"upload_mbps":150.50,"download_bytes":124500000,"upload_bytes":94062500}}]}\n' \
-  "$region" "$family" "$now" "$now" "$region" "$region_name" "$family" "$target_mbps" "$region_name" > "$output"
+status="ok"
+error=""
+upload_mbps="150.50"
+upload_bytes="94062500"
+upload_display="150.50Mbps"
+if [[ "$family" == "${MOCK_FAILED_FAMILY:-}" ]]; then
+  status="failed"
+  error="上传未产生有效数据"
+  upload_mbps="0"
+  upload_bytes="0"
+  upload_display="失败"
+fi
+printf '{"version":1,"lease_id":"lease_mock_%s_%s","started_at":%s,"completed_at":%s,"region":{"code":"%s","name":"%s"},"family":"%s","duration_seconds":5,"target_mbps":%s,"modes":["s"],"results":[{"carrier":"ct","label":"%s电信","node_id":"0123456789abcdef0123456789abcdef","latency_ms":8.25,"status":"%s","error":"%s","single":{"download_mbps":199.20,"upload_mbps":%s,"download_bytes":124500000,"upload_bytes":%s}}]}\n' \
+  "$region" "$family" "$now" "$now" "$region" "$region_name" "$family" "$target_mbps" "$region_name" \
+  "$status" "$error" "$upload_mbps" "$upload_bytes" > "$output"
 
 printf '\nIPv%s            延迟        单线程上传        单线程下载\n' "${family#v}"
-printf '%s电信          8ms       150.50Mbps       %sMbps ✓\n' "$region_name" "$target_mbps"
+printf '电信          8ms       %s       %sMbps ✓\n' "$upload_display" "$target_mbps"
 
 if [[ -n "${MOCK_NETDEV_FILE:-}" ]]; then
   cat > "$MOCK_NETDEV_FILE" <<EOF
@@ -54,3 +67,5 @@ Inter-|   Receive                                                |  Transmit
   eth0: ${MOCK_NETDEV_AFTER_RX:-100001000} 0 0 0 0 0 0 0 ${MOCK_NETDEV_AFTER_TX:-50002000} 0 0 0 0 0 0 0
 EOF
 fi
+
+[[ "$status" == "ok" ]]

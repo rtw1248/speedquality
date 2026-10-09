@@ -34,21 +34,49 @@ func TestProgressTrackerClearsLineWhenFinished(t *testing.T) {
 }
 
 func TestProgressTipsMatchFeatureAvailabilityAndRotate(t *testing.T) {
-	if strings.Contains(strings.Join(progressTips(false), "\n"), "--nq") {
-		t.Fatal("disabled NodeQuality binding is advertised")
+	for _, tip := range progressTips(false) {
+		if strings.Contains(tip.text, "--nq") {
+			t.Fatal("disabled NodeQuality binding is advertised")
+		}
 	}
 	tips := progressTips(true)
-	if !strings.Contains(progressTip(tips, 0), "--nq") {
-		t.Fatal("enabled NodeQuality binding is missing from tips")
+	for _, previous := range []string{"", tips[0].text, tips[len(tips)-1].text} {
+		counts := map[string]int{}
+		total := 0
+		for _, tip := range tips {
+			if tip.text != previous {
+				total += tip.weight
+			}
+		}
+		for choice := 0; choice < total; choice++ {
+			selected := progressTip(tips, previous, func(n int) int {
+				if n != total {
+					t.Fatalf("draw range = %d, expected %d", n, total)
+				}
+				return choice
+			})
+			counts[selected]++
+		}
+		for _, tip := range tips {
+			want := tip.weight
+			if tip.text == previous {
+				want = 0
+			}
+			if counts[tip.text] != want {
+				t.Fatalf("tip %q has %d chances, expected %d", tip.text, counts[tip.text], want)
+			}
+		}
 	}
-	if progressTip(tips, 7*time.Second) != progressTip(tips, 0) {
+	if tips[0].weight <= tips[2].weight || !strings.Contains(tips[len(tips)-1].text, "--nq") {
+		t.Fatal("province and NodeQuality tips should have higher priority")
+	}
+	tracker := &progressTracker{tips: tips, tipSlot: -1}
+	first := tracker.currentTip(0)
+	if tracker.currentTip(7*time.Second) != first {
 		t.Fatal("tip changed before the reading interval ended")
 	}
-	if progressTip(tips, 8*time.Second) == progressTip(tips, 0) {
-		t.Fatal("tip did not rotate")
-	}
-	if progressTip(tips, time.Duration(len(tips))*8*time.Second) != progressTip(tips, 0) {
-		t.Fatal("tips did not cycle")
+	if tracker.currentTip(8*time.Second) == first {
+		t.Fatal("consecutive tips repeated")
 	}
 }
 
@@ -61,7 +89,7 @@ func TestProgressTipsFitNarrowTerminalsAndClearOnFinish(t *testing.T) {
 	tracker.render()
 	tracker.Finish()
 	text := output.String()
-	if !strings.Contains(text, "提示：") || !strings.Contains(text, "--nq") {
+	if !strings.Contains(text, "提示：") {
 		t.Fatalf("tip was not displayed: %q", text)
 	}
 	if !strings.Contains(text, "\r\x1b[1A\r\x1b[2K") ||

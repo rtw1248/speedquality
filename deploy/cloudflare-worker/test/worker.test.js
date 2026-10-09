@@ -953,6 +953,15 @@ test("structured results render as terminal text and feed private node health", 
     status: "failed",
     error: "没有可连接的候选节点",
   });
+  speedReport.results.push({
+    carrier: "cm",
+    label: "湖北移动",
+    node_id: "fedcba9876543210fedcba9876543210",
+    latency_ms: 769,
+    status: "failed",
+    error: "上传未产生有效数据",
+    single: { download_mbps: 0.04, upload_mbps: 0, download_bytes: 25000, upload_bytes: 0 },
+  });
   const fields = basicFields({
     ip_mode: "v4",
     speed_url: "",
@@ -985,7 +994,10 @@ test("structured results render as terminal text and feed private node health", 
   assert.match(page, /实际流量/);
   assert.doesNotMatch(page, /达标线：|统计口径：/);
   assert.match(page, /150\.50Mbps/);
-  assert.doesNotMatch(page, /\[失败\] 联通|没有可连接的候选节点/);
+  assert.doesNotMatch(page, /\[失败\]|没有可连接的候选节点|上传未产生有效数据/);
+  assert.match(page, /769ms/);
+  assert.match(page, /0\.04Mbps/);
+  assert.match(page, />\s*失败<\/span>/);
   assert.doesNotMatch(page, /<table/);
   assert.equal(NODE_CORE.feedback.length, 1);
   assert.equal(NODE_CORE.feedback[0].measurements[0].lease_id, "lease_fixture_123");
@@ -994,6 +1006,8 @@ test("structured results render as terminal text and feed private node health", 
   assert.equal(NODE_CORE.feedback[0].measurements[0].upload_bytes, 94062500);
   assert.equal(NODE_CORE.feedback[0].measurements[1].node_id, "abcdef0123456789abcdef0123456789");
   assert.equal(NODE_CORE.feedback[0].measurements[1].status, "failed");
+  const savedReports = JSON.parse(DB.reports.get(reportID).speed_data);
+  assert.equal(savedReports[0].results[2].error, "上传未产生有效数据");
 });
 
 test("structured result target must match the session", async () => {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,11 @@ const (
 	progressTipInterval = 8 * time.Second
 )
 
+type usageTip struct {
+	text   string
+	weight int
+}
+
 type progressTracker struct {
 	writer    io.Writer
 	total     int
@@ -24,13 +30,15 @@ type progressTracker struct {
 	stop      chan struct{}
 	done      chan struct{}
 	stopOnce  sync.Once
-	tips      []string
+	tips      []usageTip
 
 	mu        sync.Mutex
 	completed int
 	label     string
 	frame     int
 	tipShown  bool
+	tipSlot   int
+	tip       string
 }
 
 func terminalProgressEnabled() bool {
@@ -41,11 +49,11 @@ func terminalProgressEnabled() bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func newProgressTracker(writer io.Writer, total int, prefix string, enabled bool, tips []string) *progressTracker {
+func newProgressTracker(writer io.Writer, total int, prefix string, enabled bool, tips []usageTip) *progressTracker {
 	tracker := &progressTracker{
 		writer: writer, total: total, prefix: prefix, enabled: enabled && total > 0,
 		startedAt: time.Now(), stop: make(chan struct{}), done: make(chan struct{}),
-		tips: append([]string(nil), tips...),
+		tips: append([]usageTip(nil), tips...), tipSlot: -1,
 	}
 	if !tracker.enabled {
 		close(tracker.done)
@@ -117,37 +125,58 @@ func (tracker *progressTracker) render() {
 		fmt.Fprint(tracker.writer, "\r\x1b[1A")
 	}
 	fmt.Fprintf(tracker.writer, "\r\x1b[2K%s", truncateProgressLine(line, width))
-	if tip := progressTip(tracker.tips, elapsed); tip != "" {
+	if tip := tracker.currentTip(elapsed); tip != "" {
 		fmt.Fprintf(tracker.writer, "\n\r\x1b[2K%s", truncateProgressLine("提示："+tip, width))
 		tracker.tipShown = true
 	}
 }
 
-func progressTips(nodeQualityEnabled bool) []string {
-	tips := []string{
-		"报告页支持复制文本、NodeSeek 和 Markdown",
-		"用 -p hb,bj 可测多个省份，最多 5 个",
-		"用 -s 100 / 200 / 400 选择限速档位",
-		"默认测 IPv4/IPv6；-v4 或 -v6 可单独测",
-		"速度后的 ✓ 表示达到所选档位，并非峰值",
-		"测速不会安装系统软件或启动后台服务",
-		"用 -l 查看地区代码，-h 查看完整用法",
+func progressTips(nodeQualityEnabled bool) []usageTip {
+	tips := []usageTip{
+		{"用 -p hb,bj 可测多个省份，最多 5 个", 4},
+		{"报告页支持复制文本、NodeSeek 和 Markdown", 2},
+		{"用 -s 100 / 200 / 400 选择限速档位", 1},
+		{"默认测 IPv4/IPv6；-v4 或 -v6 可单独测", 1},
+		{"速度后的 ✓ 表示达到所选档位，并非峰值", 1},
+		{"测速不会安装系统软件或启动后台服务", 1},
+		{"用 -l 查看地区代码，-h 查看完整用法", 1},
 	}
 	if nodeQualityEnabled {
-		tips = append([]string{"用 --nq 报告链接 关联 NodeQuality 报告"}, tips...)
+		tips = append(tips, usageTip{"用 --nq 报告链接 关联 NodeQuality 报告", 4})
 	}
 	return tips
 }
 
-func progressTip(tips []string, elapsed time.Duration) string {
-	if len(tips) == 0 {
-		return ""
+func (tracker *progressTracker) currentTip(elapsed time.Duration) string {
+	slot := int(elapsed / progressTipInterval)
+	if slot != tracker.tipSlot {
+		tracker.tip = progressTip(tracker.tips, tracker.tip, rand.IntN)
+		tracker.tipSlot = slot
 	}
-	index := int(elapsed / progressTipInterval)
-	if index < 0 {
-		index = 0
+	return tracker.tip
+}
+
+func progressTip(tips []usageTip, previous string, draw func(int) int) string {
+	total := 0
+	for _, tip := range tips {
+		if tip.text != previous && tip.weight > 0 {
+			total += tip.weight
+		}
 	}
-	return tips[index%len(tips)]
+	if total == 0 {
+		return previous
+	}
+	choice := draw(total)
+	for _, tip := range tips {
+		if tip.text == previous || tip.weight <= 0 {
+			continue
+		}
+		if choice < tip.weight {
+			return tip.text
+		}
+		choice -= tip.weight
+	}
+	return previous
 }
 
 func progressTerminalWidth(writer io.Writer) int {

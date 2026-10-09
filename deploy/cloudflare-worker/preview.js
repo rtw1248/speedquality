@@ -45,7 +45,7 @@ function sampleReport(origin, bindStatus, options = {}) {
     time_gap_seconds: timeGapSeconds,
     nq_identity_reason: linked ? options.identityReason || "masked_ip_and_asn" : "",
     bind_status: bindStatus,
-    version: "1.0.13",
+    version: "1.0.14",
   };
 }
 
@@ -111,6 +111,13 @@ function sampleSpeedReports(now, options = {}) {
     }
     case "transfer-failed": {
       const failed = report("sh", "上海", "v4");
+      failed.results[0] = {
+        ...failed.results[0],
+        latency_ms: 769,
+        status: "failed",
+        error: "上传未产生有效数据",
+        single: { download_mbps: 0.04, upload_mbps: 0, download_bytes: 25000, upload_bytes: 0 },
+      };
       failed.results[1] = {
         ...failed.results[1],
         latency_ms: null,
