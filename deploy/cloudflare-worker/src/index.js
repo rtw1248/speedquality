@@ -2,6 +2,7 @@ import { logEvent, requestID, routeLabel } from "./observability.js";
 
 const SCRIPT_MARKER = "__SPEEDQUALITY_REPORT_BASE__";
 const PROBE_VERSION_MARKER = "__SPEEDQUALITY_PROBE_VERSION__";
+const NQ_BINDING_MARKER = "__SPEEDQUALITY_NQ_BINDING_ENABLED__";
 const MAX_BODY_BYTES = 512 * 1024;
 const MAX_SNAPSHOT_BYTES = 256 * 1024;
 const MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024;
@@ -181,7 +182,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.12").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.13").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -2648,7 +2649,8 @@ async function serveRepositoryScript(request, env, filename, description) {
   if (request.method !== "HEAD") {
     body = (await upstream.text())
       .replaceAll(SCRIPT_MARKER, new URL(request.url).origin)
-      .replaceAll(PROBE_VERSION_MARKER, probeVersion);
+      .replaceAll(PROBE_VERSION_MARKER, probeVersion)
+      .replaceAll(NQ_BINDING_MARKER, nodeQualityBindingEnabled(env) ? "1" : "0");
   }
   return textResponse(body, 200, {
     "cache-control": "public, max-age=60, s-maxage=300",

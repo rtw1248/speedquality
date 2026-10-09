@@ -33,6 +33,9 @@ curl -fsSL https://sq.yolo2.cc/run | env TERM=xterm bash
 报告链接：https://sq.yolo2.cc/r/<REPORT_ID>
 ```
 
+测速时，进度条下方每 8 秒轮换一条使用提示，介绍参数、报告复制和测速结果含义；完成后
+自动清除，提示不写入测速结果或分享报告。NodeQuality 关联提示仅在部署方开放该功能时显示。
+
 普通测速不会安装系统软件、修改 Python、创建后台服务或删除用户文件。脚本只下载经过校验的
 `sqprobe`，并缓存到 `~/.cache/speedquality/` 供后续使用。
 

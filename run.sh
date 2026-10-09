@@ -2,10 +2,11 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.0.12"
-readonly FALLBACK_PROBE_VERSION="v1.0.12"
+readonly SPEEDQUALITY_VERSION="1.0.13"
+readonly FALLBACK_PROBE_VERSION="v1.0.13"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
+readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
 readonly DEFAULT_NODEQUALITY_API="https://api.nodequality.com/api/v1"
 readonly DEFAULT_NODEQUALITY_ORIGIN="https://nodequality.com"
 readonly DEFAULT_GEO_API="https://ipwho.is"
@@ -50,7 +51,11 @@ NODEQUALITY_REPORT_EPOCH=""
 NODEQUALITY_TIME_SOURCE=""
 NODEQUALITY_SNAPSHOT_FILE=""
 NODEQUALITY_IDENTITY_REASON=""
-NODEQUALITY_BINDING_ENABLED=1
+NODEQUALITY_BINDING_ENABLED="${SPEEDQUALITY_NQ_BINDING_ENABLED:-$DEFAULT_NQ_BINDING_ENABLED}"
+case "${NODEQUALITY_BINDING_ENABLED,,}" in
+  1|true|on|yes|enabled) NODEQUALITY_BINDING_ENABLED=1 ;;
+  *) NODEQUALITY_BINDING_ENABLED=0 ;;
+esac
 REGION_INPUT=""
 SELECTED_POINTS=""
 SELECTED_REGION_CODES=""
@@ -1025,6 +1030,7 @@ check_nodequality_binding_availability() {
   esac
 
   # Test and offline integrations can inject a session token without a live Worker.
+  NODEQUALITY_BINDING_ENABLED=1
   [[ -z "${SPEEDQUALITY_SESSION_TOKEN:-}" &&
      -z "${SPEEDQUALITY_SESSION_TOKEN_V4:-}" &&
      -z "${SPEEDQUALITY_SESSION_TOKEN_V6:-}" ]] || return 0
@@ -1530,7 +1536,8 @@ run_speedtest() {
           continue
         fi
         set +e
-        "$PROBE_BINARY" --lease "$lease_file" --output "$attempt_result" \
+        SPEEDQUALITY_NQ_BINDING_ENABLED="$NODEQUALITY_BINDING_ENABLED" \
+          "$PROBE_BINARY" --lease "$lease_file" --output "$attempt_result" \
           --reference-time "$(measurement_epoch)" "${diagnostic_args[@]}" | tee -a "$SPEED_LOG"
         status=${PIPESTATUS[0]}
         set -e

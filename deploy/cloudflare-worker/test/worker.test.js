@@ -1010,25 +1010,30 @@ test("structured result target must match the session", async () => {
   assert.equal(response.status, 403);
 });
 
-test("run endpoint injects its own origin into the script", async () => {
+test("run endpoint injects its origin, version, and feature availability", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(
     'REPORT_BASE="__SPEEDQUALITY_REPORT_BASE__"\n' +
-      'PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"\n',
+      'PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"\n' +
+      'NQ_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"\n',
     { status: 200 },
   );
   try {
-    const response = await worker.fetch(new Request("https://rtw.example/run"), {
-      GITHUB_OWNER: "owner",
-      GITHUB_REPO: "rtw",
-      GITHUB_REF: "main",
-      PROBE_VERSION: "v1.2.3",
-    });
-    assert.equal(response.status, 200);
-    assert.equal(
-      await response.text(),
-      'REPORT_BASE="https://rtw.example"\nPROBE_VERSION="v1.2.3"\n',
-    );
+    for (const enabled of [true, false]) {
+      const response = await worker.fetch(new Request("https://rtw.example/run"), {
+        GITHUB_OWNER: "owner",
+        GITHUB_REPO: "rtw",
+        GITHUB_REF: "main",
+        PROBE_VERSION: "v1.2.3",
+        NQ_BINDING_ENABLED: String(enabled),
+      });
+      assert.equal(response.status, 200);
+      assert.equal(
+        await response.text(),
+        'REPORT_BASE="https://rtw.example"\nPROBE_VERSION="v1.2.3"\n' +
+          `NQ_ENABLED="${enabled ? "1" : "0"}"\n`,
+      );
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

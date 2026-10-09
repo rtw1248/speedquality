@@ -4,12 +4,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const progressBarWidth = 20
+const (
+	progressBarWidth    = 20
+	progressTipInterval = 8 * time.Second
+)
 
 type progressTracker struct {
 	writer    io.Writer
@@ -20,11 +24,13 @@ type progressTracker struct {
 	stop      chan struct{}
 	done      chan struct{}
 	stopOnce  sync.Once
+	tips      []string
 
 	mu        sync.Mutex
 	completed int
 	label     string
 	frame     int
+	tipShown  bool
 }
 
 func terminalProgressEnabled() bool {
@@ -35,10 +41,11 @@ func terminalProgressEnabled() bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func newProgressTracker(writer io.Writer, total int, prefix string, enabled bool) *progressTracker {
+func newProgressTracker(writer io.Writer, total int, prefix string, enabled bool, tips []string) *progressTracker {
 	tracker := &progressTracker{
 		writer: writer, total: total, prefix: prefix, enabled: enabled && total > 0,
 		startedAt: time.Now(), stop: make(chan struct{}), done: make(chan struct{}),
+		tips: append([]string(nil), tips...),
 	}
 	if !tracker.enabled {
 		close(tracker.done)
@@ -82,24 +89,100 @@ func (tracker *progressTracker) Finish() {
 	if !tracker.enabled {
 		return
 	}
-	tracker.stopOnce.Do(func() { close(tracker.stop) })
-	<-tracker.done
-	fmt.Fprint(tracker.writer, "\r\x1b[2K")
+	tracker.stopOnce.Do(func() {
+		close(tracker.stop)
+		<-tracker.done
+		if tracker.tipShown {
+			fmt.Fprint(tracker.writer, "\r\x1b[2K\x1b[1A")
+		}
+		fmt.Fprint(tracker.writer, "\r\x1b[2K")
+	})
 }
 
 func (tracker *progressTracker) render() {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 	tracker.frame++
+	elapsed := time.Since(tracker.startedAt)
 	line := formatProgressLine(
 		tracker.completed,
 		tracker.total,
 		tracker.prefix,
 		tracker.label,
-		time.Since(tracker.startedAt),
+		elapsed,
 		tracker.frame,
 	)
-	fmt.Fprintf(tracker.writer, "\r\x1b[2K%s", line)
+	width := progressTerminalWidth(tracker.writer) - 1
+	if tracker.tipShown {
+		fmt.Fprint(tracker.writer, "\r\x1b[1A")
+	}
+	fmt.Fprintf(tracker.writer, "\r\x1b[2K%s", truncateProgressLine(line, width))
+	if tip := progressTip(tracker.tips, elapsed); tip != "" {
+		fmt.Fprintf(tracker.writer, "\n\r\x1b[2K%s", truncateProgressLine("提示："+tip, width))
+		tracker.tipShown = true
+	}
+}
+
+func progressTips(nodeQualityEnabled bool) []string {
+	tips := []string{
+		"报告页支持复制文本、NodeSeek 和 Markdown",
+		"用 -p hb,bj 可测多个省份，最多 5 个",
+		"用 -s 100 / 200 / 400 选择限速档位",
+		"默认测 IPv4/IPv6；-v4 或 -v6 可单独测",
+		"速度后的 ✓ 表示达到所选档位，并非峰值",
+		"测速不会安装系统软件或启动后台服务",
+		"用 -l 查看地区代码，-h 查看完整用法",
+	}
+	if nodeQualityEnabled {
+		tips = append([]string{"用 --nq 报告链接 关联 NodeQuality 报告"}, tips...)
+	}
+	return tips
+}
+
+func progressTip(tips []string, elapsed time.Duration) string {
+	if len(tips) == 0 {
+		return ""
+	}
+	index := int(elapsed / progressTipInterval)
+	if index < 0 {
+		index = 0
+	}
+	return tips[index%len(tips)]
+}
+
+func progressTerminalWidth(writer io.Writer) int {
+	if file, ok := writer.(interface{ Fd() uintptr }); ok {
+		if columns := terminalColumns(file.Fd()); columns > 0 {
+			return columns
+		}
+	}
+	if columns, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && columns > 0 && columns <= 4096 {
+		return columns
+	}
+	return 80
+}
+
+func truncateProgressLine(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if displayWidth(text) <= width {
+		return text
+	}
+	suffix := "..."
+	if width < len(suffix) {
+		return strings.Repeat(".", width)
+	}
+	var clipped strings.Builder
+	remaining := width - len(suffix)
+	for _, character := range text {
+		remaining -= displayWidth(string(character))
+		if remaining < 0 {
+			break
+		}
+		clipped.WriteRune(character)
+	}
+	return clipped.String() + suffix
 }
 
 func formatProgressLine(completed, total int, prefix, label string, elapsed time.Duration, frame int) string {
