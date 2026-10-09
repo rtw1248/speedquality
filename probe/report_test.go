@@ -45,6 +45,24 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 	}
 }
 
+func TestPrintReportKeepsPartialMeasurementsVisible(t *testing.T) {
+	report := Report{
+		Region: Region{Name: "湖北"}, Family: "v4", TargetMbps: 200,
+		Results: []MeasurementResult{{
+			Label: "湖北电信", Status: "failed", Latency: 20.5,
+			Error:  "上传未产生有效数据",
+			Single: &ModeResult{DownloadMbps: 123.45, DownloadBytes: 1_000_000},
+		}},
+	}
+	var output bytes.Buffer
+	printReport(&output, report)
+	plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(output.String(), "")
+	if !strings.Contains(plain, "20.50ms") || !strings.Contains(plain, "123.45Mbps") ||
+		!strings.Contains(plain, "上传未产生有效数据") {
+		t.Fatalf("partial failure details were hidden: %q", plain)
+	}
+}
+
 func TestDiagnosticErrorDoesNotExposeNodeURL(t *testing.T) {
 	err := &url.Error{
 		Op:  "Get",

@@ -183,45 +183,22 @@ func runLease(ctx context.Context, lease Lease) Report {
 		TargetMbps:      lease.TargetMbps,
 		Modes:           append([]string(nil), lease.Modes...),
 	}
-	prepared := make([]preparedTarget, len(lease.Targets))
-	var preparations sync.WaitGroup
-	for index, target := range lease.Targets {
-		preparations.Add(1)
-		go func(index int, target TargetGroup) {
-			defer preparations.Done()
-			prepared[index] = prepareTarget(ctx, lease.Family, target)
-		}(index, target)
-	}
-	preparations.Wait()
-	defer func() {
-		for index := range prepared {
-			if prepared[index].key != "" {
-				if err := releaseCandidate(prepared[index].candidate, prepared[index].key); err != nil {
-					diagnostic(ctx, slog.LevelWarn, "candidate.release_failed",
-						"lease_id", lease.LeaseID,
-						"node_id", prepared[index].candidate.ID,
-						"error", diagnosticError(err),
-					)
-				}
-			}
-		}
-	}()
-	for index := range prepared {
-		report.Results = append(report.Results, runPreparedTarget(ctx, lease, prepared[index]))
-		if prepared[index].key != "" {
-			if err := releaseCandidate(prepared[index].candidate, prepared[index].key); err != nil {
+	for _, target := range lease.Targets {
+		prepared := prepareTarget(ctx, lease.Family, target)
+		report.Results = append(report.Results, runPreparedTarget(ctx, lease, prepared))
+		if prepared.key != "" {
+			if err := releaseCandidate(prepared.candidate, prepared.key); err != nil {
 				diagnostic(ctx, slog.LevelWarn, "candidate.release_failed",
 					"lease_id", lease.LeaseID,
-					"node_id", prepared[index].candidate.ID,
+					"node_id", prepared.candidate.ID,
 					"error", diagnosticError(err),
 				)
 			} else {
 				diagnostic(ctx, slog.LevelInfo, "candidate.released",
 					"lease_id", lease.LeaseID,
-					"node_id", prepared[index].candidate.ID,
+					"node_id", prepared.candidate.ID,
 				)
 			}
-			prepared[index].key = ""
 		}
 	}
 	report.CompletedAt = time.Now().Unix()
@@ -350,7 +327,14 @@ func runPreparedTarget(ctx context.Context, lease Lease, prepared preparedTarget
 	if result.Single.DownloadMbps > 0 && result.Single.UploadMbps > 0 {
 		result.Status = "ok"
 	} else {
-		result.Error = "测速连接未产生有效数据"
+		failedDirections := make([]string, 0, 2)
+		if result.Single.DownloadMbps <= 0 {
+			failedDirections = append(failedDirections, "下载")
+		}
+		if result.Single.UploadMbps <= 0 {
+			failedDirections = append(failedDirections, "上传")
+		}
+		result.Error = strings.Join(failedDirections, "、") + "未产生有效数据"
 	}
 	return result
 }
@@ -536,14 +520,14 @@ func downloadWorker(
 	ctx context.Context,
 	spec RequestSpec,
 	key string,
-	worker int,
+	_ int,
 	counter *atomicCounter,
 	limiter *byteRateLimiter,
 ) {
 	request, err := http.NewRequestWithContext(
 		ctx,
 		strings.ToUpper(spec.Method),
-		replaceTemplates(spec.URL, key, fmt.Sprintf("%d-%d", time.Now().UnixNano(), worker)),
+		replaceTemplates(spec.URL, key, fmt.Sprintf("%d", time.Now().Unix())),
 		nil,
 	)
 	if err != nil {
@@ -603,6 +587,7 @@ func transferHTTPClient() *http.Client {
 	transport := &http.Transport{
 		Proxy:                 nil,
 		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: -1}).DialContext,
+		DisableCompression:    true,
 		DisableKeepAlives:     true,
 		MaxIdleConns:          1,
 		ResponseHeaderTimeout: 8 * time.Second,

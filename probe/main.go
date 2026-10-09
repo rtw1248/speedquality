@@ -122,11 +122,24 @@ func printReport(writer io.Writer, report Report) {
 	}, reset)
 	for _, result := range report.Results {
 		if result.Status != "ok" {
+			latency := "-"
+			download, upload := "失败", "失败"
+			if result.Latency > 0 {
+				latency = fmt.Sprintf("%.2fms", result.Latency)
+			}
+			if result.Single != nil {
+				if result.Single.DownloadMbps > 0 {
+					download = displaySpeed(result.Single.DownloadMbps, report.TargetMbps)
+				}
+				if result.Single.UploadMbps > 0 {
+					upload = displaySpeed(result.Single.UploadMbps, report.TargetMbps)
+				}
+			}
 			writeColumns(writer, []tableColumn{
 				{result.Label, 12, "right", cyan},
-				{"-", 10, "right", red},
-				{"失败", 18, "right", red},
-				{"失败", 18, "right", red},
+				{latency, 10, "right", red},
+				{upload, 18, "right", red},
+				{download, 18, "right", red},
 			}, reset)
 			fmt.Fprintf(writer, "  %s[失败] %s：%s%s\n", red, result.Label, result.Error, reset)
 			continue

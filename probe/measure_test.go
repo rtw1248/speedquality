@@ -17,6 +17,7 @@ import (
 
 func TestGenericNodeLifecycleAndTransfers(t *testing.T) {
 	var released atomic.Bool
+	var downloadNonce atomic.Int64
 	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/activate":
@@ -25,6 +26,9 @@ func TestGenericNodeLifecycleAndTransfers(t *testing.T) {
 			if request.URL.Query().Get("key") != "test-key" {
 				http.Error(writer, "bad key", http.StatusForbidden)
 				return
+			}
+			if nonce, err := strconv.ParseInt(request.URL.Query().Get("nonce"), 10, 64); err == nil {
+				downloadNonce.Store(nonce)
 			}
 			writer.Header().Set("content-type", "application/octet-stream")
 			buffer := make([]byte, 32*1024)
@@ -109,6 +113,9 @@ func TestGenericNodeLifecycleAndTransfers(t *testing.T) {
 	)
 	if downMbps <= 0 || downBytes <= 0 {
 		t.Fatalf("download did not produce traffic: %.2f Mbps / %d bytes", downMbps, downBytes)
+	}
+	if nonce := downloadNonce.Load(); nonce == 0 || time.Since(time.Unix(nonce, 0)).Abs() > 5*time.Second {
+		t.Fatalf("download nonce is not a current Unix timestamp: %d", nonce)
 	}
 	if upMbps <= 0 || upBytes <= 0 {
 		t.Fatalf("upload did not produce traffic: %.2f Mbps / %d bytes", upMbps, upBytes)

@@ -215,7 +215,9 @@ func validateRequestSpec(spec RequestSpec, address string, port int) error {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
 		return errors.New("invalid URL")
 	}
-	if !strings.EqualFold(parsed.Hostname(), address) {
+	requestIP := net.ParseIP(parsed.Hostname())
+	expectedIP := net.ParseIP(address)
+	if requestIP == nil || expectedIP == nil || !requestIP.Equal(expectedIP) {
 		return errors.New("URL host differs from candidate address")
 	}
 	actualPort := parsed.Port()

@@ -63,6 +63,19 @@ func TestLeaseValidationRejectsCrossHostOperation(t *testing.T) {
 	}
 }
 
+func TestRequestValidationAcceptsEquivalentIPv6Text(t *testing.T) {
+	spec := RequestSpec{
+		Method: "GET",
+		URL:    "http://[2001:db8::1]:8080/download?key={key}",
+	}
+	if err := validateRequestSpec(spec, "2001:0db8:0:0:0:0:0:1", 8080); err != nil {
+		t.Fatalf("equivalent IPv6 address rejected: %v", err)
+	}
+	if err := validateRequestSpec(spec, "2001:db8::2", 8080); err == nil {
+		t.Fatal("different IPv6 address was accepted")
+	}
+}
+
 func TestLeaseValidationRejectsExcessiveActivationDelay(t *testing.T) {
 	now := time.Now()
 	lease := validTestLease(now)
