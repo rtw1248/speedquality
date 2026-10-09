@@ -241,6 +241,101 @@ test_auto_ssh_region() {
   pass '根据 SSH 来源自动选择省份'
 }
 
+test_auto_ssh_region_in_terminal() {
+  local scenario command argument quoted_argument args output expected_region expected_speed geo
+  local -a options
+  command -v script >/dev/null 2>&1 || fail '缺少伪终端测试命令 script'
+  for scenario in default auto custom override; do
+    args="$TEST_DIR/terminal-$scenario-args.txt"
+    output="$TEST_DIR/terminal-$scenario.out"
+    expected_region=hb
+    expected_speed=200
+    geo="$GEO_HUBEI"
+    options=()
+    case "$scenario" in
+      auto) options=(-p auto) ;;
+      custom) options=(-s 100 -v4); expected_speed=100 ;;
+      override)
+        options=(-p bj)
+        expected_region=bj
+        geo="$TEST_DIR/geo-must-not-be-read.json"
+        ;;
+    esac
+    printf -v command 'test -t 0 && exec bash %q' "$RUNNER"
+    for argument in "${options[@]}"; do
+      printf -v quoted_argument '%q' "$argument"
+      command+=" $quoted_argument"
+    done
+    report_env TERM=dumb SPEEDQUALITY_SSH_CLIENT_IP=1.2.3.4 \
+      SPEEDQUALITY_GEO_RESPONSE_FILE="$geo" MOCK_ARGS_FILE="$args" MOCK_TARGET_MBPS="$expected_speed" \
+      timeout -k 2s 15s script -qefc "$command" /dev/null </dev/null >"$output" 2>&1 \
+      || fail "终端自动选省未完成: $scenario"
+    assert_line "$args" "$expected_region v4"
+    assert_contains "$output" "速度档位: $expected_speed Mbps"
+    assert_contains "$output" "分享报告: $REPORT_PAGE"
+    assert_not_contains "$output" '测速地区 ['
+    assert_not_contains "$output" '请选择 ['
+    assert_not_contains "$output" '结果展示'
+    if [[ "$scenario" == override ]]; then
+      assert_not_contains "$output" '自动选择 湖北'
+    else
+      assert_contains "$output" '自动选择 湖北 (hb)'
+    fi
+  done
+  pass '交互终端识别省份后直接测速，auto、其他参数和 -p 覆盖均不弹出菜单'
+}
+
+test_explicit_interactive_selection() {
+  local scenario command args output input geo expected_region expected_speed option
+  for scenario in defaults override unknown linked; do
+    args="$TEST_DIR/interactive-$scenario-args.txt"
+    output="$TEST_DIR/interactive-$scenario.out"
+    input=$'\n\n\n'
+    geo="$GEO_HUBEI"
+    expected_region=hb
+    expected_speed=200
+    option=-i
+    case "$scenario" in
+      override) input=$'bj\n1\n1\n'; expected_region=bj; expected_speed=100 ;;
+      unknown) input=$'hb\n2\n1\n'; geo="$FOREIGN_GEO"; option=--interactive ;;
+      linked) input=$(printf '\n2\n2\n%s\n' "$REPORT_URL"); input+=$'\n' ;;
+    esac
+    printf -v command 'test -t 0 && exec bash %q %q' "$RUNNER" "$option"
+    printf '%s' "$input" | report_env TERM=dumb \
+      SPEEDQUALITY_SSH_CLIENT_IP=1.2.3.4 SPEEDQUALITY_GEO_RESPONSE_FILE="$geo" \
+      SPEEDQUALITY_NODEQUALITY_IPINFO_FILE="$CURRENT_INFO" \
+      SPEEDQUALITY_NODEQUALITY_RECORD_FILE="$MATCH_RECORD" \
+      MOCK_ARGS_FILE="$args" MOCK_TARGET_MBPS="$expected_speed" \
+      timeout -k 2s 15s script -qefc "$command" /dev/null >"$output" 2>&1 \
+      || fail "显式手动选择未完成: $scenario"
+    assert_contains "$output" '测速地区 ['
+    assert_contains "$output" '测速档位'
+    assert_contains "$output" '结果展示'
+    assert_contains "$output" "速度档位: $expected_speed Mbps"
+    assert_contains "$output" "分享报告: $REPORT_PAGE"
+    assert_line "$args" "$expected_region v4"
+    if [[ "$scenario" == linked ]]; then
+      assert_contains "$output" '服务器身份校验通过'
+    fi
+  done
+
+  if report_env bash "$RUNNER" -i </dev/null >"$TEST_DIR/interactive-no-tty.out" 2>&1; then
+    fail '没有可输入终端时仍进入手动模式'
+  fi
+  assert_contains "$TEST_DIR/interactive-no-tty.out" '-i/--interactive 需要可输入的终端'
+  assert_not_contains "$TEST_DIR/interactive-no-tty.out" '开始运行'
+
+  printf -v command 'exec bash %q -i' "$RUNNER"
+  if printf 'sz\n' | report_env TERM=dumb SPEEDQUALITY_SSH_CLIENT_IP=1.2.3.4 \
+    SPEEDQUALITY_GEO_RESPONSE_FILE="$GEO_HUBEI" \
+    timeout -k 2s 15s script -qefc "$command" /dev/null >"$TEST_DIR/interactive-invalid.out" 2>&1; then
+    fail '手动输入无效地区仍开始测速'
+  fi
+  assert_contains "$TEST_DIR/interactive-invalid.out" '不支持的省级地区: sz'
+  assert_not_contains "$TEST_DIR/interactive-invalid.out" '测速档位'
+  pass '仅显式 -i/--interactive 进入菜单，支持默认值、改省份、未知来源和 NQ 关联'
+}
+
 test_speed_aliases_and_validation() {
   local speed args output
   for speed in 100 200 400; do
@@ -469,18 +564,39 @@ test_bsg_preset_and_province_limit() {
   local args="$TEST_DIR/bsg-args.txt"
   local foreign_args="$TEST_DIR/bsg-foreign-args.txt"
   local output="$TEST_DIR/bsg.out"
+  local selection
   report_env \
     SPEEDQUALITY_SSH_CLIENT_IP=1.2.3.4 SPEEDQUALITY_GEO_RESPONSE_FILE="$GEO_HUBEI" \
     MOCK_ARGS_FILE="$args" MOCK_TARGET_MBPS=100 \
     bash "$RUNNER" -p bsg -s 100 >"$output" 2>&1
 
-  assert_line "$args" 'hb v4'
+  assert_not_contains "$args" 'hb v4'
   assert_line "$args" 'bj v4'
   assert_line "$args" 'sh v4'
   assert_line "$args" 'gd v4'
-  assert_contains "$output" 'bsg 将选择 湖北、北京、上海和广东并自动去重'
-  assert_contains "$output" '测速省份: 湖北,北京,上海,广东'
-  assert_contains "$output" '预计最多约 2.10 GB'
+  assert_contains "$output" '测速省份: 北京,上海,广东'
+  assert_contains "$output" '预计最多约 1.57 GB'
+  assert_not_contains "$output" 'SSH 来源'
+
+  for selection in 'bsg,bj,sh' 'bj,bsg,sh,bsg' '北上广，北京、上海'; do
+    args="$TEST_DIR/bsg-mixed-$selection.txt"
+    report_env SPEEDQUALITY_GEO_RESPONSE_FILE="$TEST_DIR/geo-must-not-be-read.json" \
+      MOCK_ARGS_FILE="$args" bash "$RUNNER" -p "$selection" >"$TEST_DIR/bsg-mixed.out" 2>&1
+    [[ "$(wc -l < "$args")" -eq 3 ]] || fail 'bsg 混写后没有去重为三省'
+    assert_line "$args" 'bj v4'
+    assert_line "$args" 'sh v4'
+    assert_line "$args" 'gd v4'
+    assert_contains "$TEST_DIR/bsg-mixed.out" '测速省份: 北京,上海,广东'
+  done
+  args="$TEST_DIR/hb-bsg-args.txt"
+  report_env MOCK_ARGS_FILE="$args" bash "$RUNNER" -p hb,bsg >"$TEST_DIR/hb-bsg.out" 2>&1
+  [[ "$(wc -l < "$args")" -eq 4 ]] || fail 'hb,bsg 没有展开为四省'
+  assert_contains "$TEST_DIR/hb-bsg.out" '测速省份: 湖北,北京,上海,广东'
+  if report_env bash "$RUNNER" -p bsg,hb,js,zj >"$TEST_DIR/bsg-six.out" 2>&1; then
+    fail 'bsg 展开后超过五省仍被接受'
+  fi
+  assert_contains "$TEST_DIR/bsg-six.out" '单次最多测试 5 个省份'
+  assert_not_contains "$TEST_DIR/bsg-six.out" '开始运行'
 
   report_env \
     SPEEDQUALITY_SSH_CLIENT_IP=8.8.8.8 SPEEDQUALITY_GEO_RESPONSE_FILE="$FOREIGN_GEO" \
@@ -490,7 +606,7 @@ test_bsg_preset_and_province_limit() {
   assert_line "$foreign_args" 'bj v4'
   assert_line "$foreign_args" 'sh v4'
   assert_line "$foreign_args" 'gd v4'
-  assert_contains "$TEST_DIR/bsg-foreign.out" 'bsg 将只选择北京、上海和广东'
+  assert_contains "$TEST_DIR/bsg-foreign.out" '测速省份: 北京,上海,广东'
   assert_not_contains "$TEST_DIR/bsg-foreign.out" '请手动选择'
 
   if report_env bash "$RUNNER" -p all >"$TEST_DIR/all-removed.out" 2>&1; then
@@ -509,7 +625,7 @@ test_bsg_preset_and_province_limit() {
     fail '单次六省测速被接受'
   fi
   assert_contains "$TEST_DIR/six-provinces.out" '单次最多测试 5 个省份'
-  pass 'bsg 优先使用来源省份加北上广，来源未知时退化为北上广三省'
+  pass 'bsg 固定北上广，支持混写去重，展开后最多五省且不查询 SSH 来源'
 }
 
 test_exact_community_node_route() {
@@ -532,6 +648,12 @@ test_exact_community_node_route() {
     fail '--node 接受了与登记省份不一致的 -p'
   fi
   assert_contains "$TEST_DIR/node-wrong-region.out" '登记在 湖北 (hb)'
+
+  if report_env SPEEDQUALITY_NODE_ROUTE_FILE="$FIXTURES/node-route-hb-v4.json" \
+    bash "$RUNNER" --node "$route_key" -p bsg,hb >"$TEST_DIR/node-bsg.out" 2>&1; then
+    fail '--node 接受了包含 bsg 的省份组合'
+  fi
+  assert_contains "$TEST_DIR/node-bsg.out" '不能与 bsg 一起使用'
 
   if report_env SPEEDQUALITY_NODE_ROUTE_FILE="$FIXTURES/node-route-hb-v4.json" \
     bash "$RUNNER" --node "$route_key" -s 400 >"$TEST_DIR/node-too-fast.out" 2>&1; then
@@ -581,7 +703,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.16" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.17" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -684,17 +806,7 @@ test_unavailable_ssh_exits_before_interactive_prompts() {
     done
   done
 
-  # A recognized region still allows a correction, but validates it immediately.
-  printf -v command \
-    'env TERM=dumb SPEEDQUALITY_REPORT_BASE=%q SPEEDQUALITY_SSH_CLIENT_IP=8.8.8.8 SPEEDQUALITY_GEO_RESPONSE_FILE=%q bash %q' \
-    "$REPORT_BASE" "$GEO_HUBEI" "$RUNNER"
-  if printf 'sz\n1\n1\n' | script -qefc "$command" /dev/null >"$output" 2>&1; then
-    fail '交互输入无效地区时仍开始测速'
-  fi
-  assert_contains "$output" '不支持的省级地区: sz'
-  assert_not_contains "$output" '测速档位'
-  assert_not_contains "$output" '结果展示'
-  pass '无法定位时直接退出并提示完整命令；交互地区输入在其它选项前校验'
+  pass '无法定位时直接退出并提示完整命令，不进入交互菜单'
 }
 
 test_verified_nodequality() {
@@ -921,7 +1033,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.16|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.17|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -935,8 +1047,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.16'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.16'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.17'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.17'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
@@ -975,6 +1087,8 @@ prepare_fixtures
 bash -n "$RUNNER" "$MOCK_PROBE" "$0"
 test_short_province_and_default_speed
 test_auto_ssh_region
+test_auto_ssh_region_in_terminal
+test_explicit_interactive_selection
 test_speed_aliases_and_validation
 test_ip_family_selection
 test_partial_failure_keeps_compact_table

@@ -21,11 +21,14 @@ bash <(curl -fsSL https://sq.yolo2.cc/run)
 curl -fsSL https://sq.yolo2.cc/run | env TERM=xterm bash
 ```
 
-不传参数时，脚本会识别当前 SSH 来源省份，并允许在交互界面中修改。测速档位默认是
-`200 Mbps`；IPv4 和 IPv6 默认都检测，服务器只支持其中一种时只测可用的协议。
+不传参数时，脚本会按当前 SSH 连接来源 IP 所在省份直接测速，无需再输入或确认。
+测速档位默认是 `200 Mbps`；IPv4 和 IPv6 默认都检测，服务器只支持其中一种时只测可用的协议。
+需要更换地区、档位或关联报告时，分别使用 `-p`、`-s` 和 `--nq`。
+希望通过菜单选择时，显式添加 `-i`（`--interactive`）；该模式需要可输入的终端。
 
 如果未指定 `-p` 且无法识别来源省份，脚本会直接退出并给出可复制的命令：先用 `-l`
 （`--list-provinces`）查看地区代码，再用 `-p hb` 等参数重新运行。
+也可以添加 `-i` 进入手动选择。
 
 测速过程和结果会直接显示在终端，完成后再返回分享链接：
 
@@ -36,6 +39,7 @@ curl -fsSL https://sq.yolo2.cc/run | env TERM=xterm bash
 测速时，进度条下方每 8 秒轮换一条使用提示，随机起始，相邻两次不重复。`--nq` 关联提示
 优先级最高，其次是省份选择，穿插介绍报告复制、档位和测速结果含义；完成后自动清除，
 提示不写入测速结果或分享报告。NodeQuality 关联提示仅在部署方开放该功能时显示。
+轮播提示也会说明：不传 `-p` 时，自动测 SSH 来源 IP 所在省份。
 切换 IPv4、IPv6 或省份时继续之前的提示及其剩余展示时间；提示状态随本次临时目录清理。
 
 表格中的 `-` 表示本次没有可连接的候选节点；`失败` 表示该方向未取得有效速率，另一方向
@@ -60,8 +64,14 @@ bash <(curl -fsSL https://sq.yolo2.cc/run) -p '湖北，北京' -s 100
 bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb -v4
 bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb -v6
 
-# SSH 来源省份加北京、上海、广东，自动去重
+# 只测北京、上海、广东
 bash <(curl -fsSL https://sq.yolo2.cc/run) -p bsg -s 100
+
+# 湖北加北上广，展开后去重
+bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb,bsg
+
+# 手动选择地区、档位和报告关联
+bash <(curl -fsSL https://sq.yolo2.cc/run) -i
 
 # 绑定已有 NodeQuality 报告
 bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb \
@@ -80,6 +90,7 @@ bash <(curl -fsSL https://sq.yolo2.cc/run) \
 | `-s, --speed VALUE` | 测速档位和最高速率：`100/200/400` Mbps，默认 `200` |
 | `-v4, --ipv4` | 只测 IPv4 |
 | `-v6, --ipv6` | 只测 IPv6；不能与 `-v4` 同时使用 |
+| `-i, --interactive` | 显式进入手动选择菜单；已传入的参数作为菜单默认值 |
 | `--nq URL` | 绑定已有 NodeQuality 报告 URL 或报告 token |
 | `--node ROUTE_KEY` | 精确使用自己的 SQ 节点；不传 `-p` 时采用节点登记省份 |
 | `-l, --list-provinces` | 显示支持的省份代码并退出 |
@@ -106,8 +117,8 @@ bash <(curl -fsSL https://sq.yolo2.cc/run) \
 仍可通过 `--node ROUTE_KEY` 精确使用。
 
 - 多个省份可以用英文逗号、中文逗号或顿号分隔，单次最多选择 5 个；`all` 已关闭。
-- `bsg` 表示“SSH 来源省份 + 北京 + 上海 + 广东”，重复地区会自动去除；来源省份无法
-  识别或暂未开放公共测速时，只测试北京、上海和广东。
+- `bsg` 固定表示北京、上海、广东，不依赖 SSH 来源。可与其他省份混写：`hb,bsg` 表示湖北
+  加北上广，`bsg,bj,sh` 去重后仍只测北上广。展开并去重后最多 5 个省份，超出时直接提示错误。
 - 城市名不会静默转换。输入“武汉”会提示改用 `hb` 或“湖北”，避免混淆节点位置。
 - 不传 `-p` 时读取 `SSH_CONNECTION`、`SSH_CLIENT` 或登录会话来源。使用跳板机时通常只能
   识别跳板机地址，应手动指定省份；海外、内网或无法定位的来源会直接退出，提示先用 `-l`

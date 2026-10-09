@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.0.16"
-readonly FALLBACK_PROBE_VERSION="v1.0.16"
+readonly SPEEDQUALITY_VERSION="1.0.17"
+readonly FALLBACK_PROBE_VERSION="v1.0.17"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -61,12 +61,12 @@ SELECTED_POINTS=""
 SELECTED_REGION_CODES=""
 SPEED_MODE="s"
 SPEED_TARGET_MBPS=200
+INTERACTIVE_MODE=0
 IP_FAMILY_SELECTION="auto"
 IP_MODE="v4"
 SSH_CLIENT_IP=""
 AUTO_REGION_CODE=""
 AUTO_REGION_NAME=""
-ORIGINAL_ARG_COUNT=0
 TRAFFIC_RX_BYTES=""
 TRAFFIC_TX_BYTES=""
 TRAFFIC_TOTAL_BYTES=""
@@ -141,6 +141,7 @@ SpeedQuality 选项:
   -s, --speed VALUE       测速档位及最高速率：100、200、400 Mbps，默认 200
   -v4, --ipv4             仅测试 IPv4；默认自动测试可用的 IPv4 和 IPv6
   -v6, --ipv6             仅测试 IPv6；不能与 -v4 同时使用
+  -i, --interactive       手动选择地区、测速档位和报告关联；默认直接测速
       --nq URL            绑定已有 NodeQuality 报告 URL 或报告 token
       --node ROUTE_KEY    精确使用自己的 SQ 节点；不传 -p 时采用节点登记省份
   -l, --list-provinces    显示支持的省份代码
@@ -148,13 +149,16 @@ SpeedQuality 选项:
       --version           显示脚本和探针版本
 
 地区代码:
-  bsg SSH 来源省份（已开放公共测速时）+ 北京、上海、广东；否则只测北上广
+  bsg 固定表示北京、上海、广东；可组合 hb,bsg 或 bsg,bj,sh，展开后自动去重。
   多个省份可使用中英文逗号或顿号分隔；单次最多 5 个，完整列表使用 --list-provinces 查看。
-  不传 -p 且无法识别 SSH 来源地区时直接退出；请先用 -l 查看代码，再用 -p 指定。
+  不传 -p 时，自动按 SSH 连接来源 IP 所在省份测速；需要更换地区时用 -p 指定。
+  使用 SSH 跳板机时通常只能识别跳板机来源，建议用 -p 指定实际想测的省份。
+  不传 -p 且无法识别 SSH 来源地区时直接退出；请用 -l 查看代码、-p 指定，或加 -i 手动选择。
 
 示例:
   $run_command
   $run_command -l
+  $run_command -i
   $run_command -p hb -s 200
   $run_command -p '湖北，北京' -s 100 -v4
   $run_command -p hb -s 100 -v6
@@ -239,7 +243,7 @@ list_provinces() {
   hi 海南    cq 重庆    sc 四川    gz 贵州    yn 云南
   xz 西藏    sn 陕西    gs 甘肃    qh 青海    nx 宁夏
   xj 新疆
-  bsg SSH 来源省份（已开放公共测速时）+ 北京、上海、广东（自动去重）
+  bsg 北京、上海、广东；可与其他省份组合，展开后自动去重
 
   易混代码均保持唯一：河北 he / 湖北 hb，河南 ha / 湖南 hn，山西 sx / 陕西 sn。
   单次最多选择 5 个省级地区；全国 all 测试已关闭。
@@ -285,7 +289,7 @@ city_province_hint() {
 normalize_regions() {
   local text="$1"
   local token code name hint hint_code hint_name
-  local -a tokens names codes
+  local -a tokens=() names=() codes=() expanded=()
   local -A seen=()
 
   text="${text//，/,}"
@@ -296,22 +300,18 @@ normalize_regions() {
   text="${text// /,}"
   IFS=',' read -r -a tokens <<< "$text"
 
-  if ((${#tokens[@]} == 1)) && [[ "${tokens[0],,}" =~ ^(bsg|北上广)$ ]]; then
-    if [[ -n "$AUTO_REGION_CODE" ]]; then
-      tokens=("$AUTO_REGION_CODE" bj sh gd)
-    else
-      tokens=(bj sh gd)
-    fi
-  else
-    for token in "${tokens[@]}"; do
-      case "${token,,}" in
-        all) die "全国 all 测试已关闭；请使用 -p bsg 或明确选择最多 5 个省份" ;;
-        bsg|北上广) die "bsg 需要单独使用；它会自动加入 SSH 来源省份、北京、上海和广东" ;;
-      esac
-    done
-  fi
-
   for token in "${tokens[@]}"; do
+    case "${token,,}" in
+      all) die "全国 all 测试已关闭；请使用 -p bsg 或明确选择最多 5 个省份" ;;
+      bsg|北上广)
+        [[ -z "$NODE_ROUTE_KEY" ]] || die "--node 只能使用节点登记的一个省份，不能与 bsg 一起使用"
+        expanded+=(bj sh gd)
+        ;;
+      *) expanded+=("$token") ;;
+    esac
+  done
+
+  for token in "${expanded[@]}"; do
     [[ -n "$token" ]] || continue
     if ! code=$(region_code_from_token "$token"); then
       if hint=$(city_province_hint "$token" 2>/dev/null); then
@@ -491,50 +491,49 @@ interactive_region_selection() {
   printf '\n%sSSH 来源地区%s\n' "$C_CYAN" "$C_RESET"
   if [[ -n "$AUTO_REGION_CODE" ]]; then
     printf '  检测到 %s -> %s (%s)\n' "$SSH_CLIENT_IP" "$AUTO_REGION_NAME" "$AUTO_REGION_CODE"
-    printf '  如果经过 SSH 跳板机，请手动改成你的实际地区。\n'
-  elif [[ -n "$SSH_CLIENT_IP" ]]; then
-    printf '  已检测到来源 %s，但无法自动映射地区。\n' "$SSH_CLIENT_IP"
+    printf '  如果经过 SSH 跳板机，可在这里改成实际想测的省份。\n'
+  else
+    printf '  未识别到可用的 SSH 来源省份，请手动选择。\n'
   fi
   default_region="${REGION_INPUT:-$AUTO_REGION_CODE}"
   if [[ -n "$default_region" ]]; then
     default_name=$(region_name "$default_region" 2>/dev/null || printf '%s' "$default_region")
-    printf '  测速地区 [默认 %s (%s)，可填 bsg 或 hb,bj，最多 5 个]: ' \
-      "$default_name" "$default_region"
+    printf '  测速地区 [默认 %s，可填 bsg、hb 或 hb,bsg，最多 5 个]: ' "$default_name"
   else
-    printf '  测速地区 [无默认值，可填 bsg、hb 或 hb,bj，最多 5 个]: '
+    printf '  测速地区 [无默认值，可填 bsg、hb 或 hb,bsg，最多 5 个]: '
   fi
-  IFS= read -r answer || answer=""
+  IFS= read -r answer || die "已取消手动选择"
   REGION_INPUT="${answer:-$default_region}"
-  [[ -n "$REGION_INPUT" ]] || die "无法自动确定地区，请重新运行并使用 -p/--province 指定"
-  normalize_regions "$REGION_INPUT"
+  if [[ "${REGION_INPUT,,}" == auto ]]; then REGION_INPUT="$AUTO_REGION_CODE"; fi
+  [[ -n "$REGION_INPUT" ]] || die "无法自动确定地区，请用 -p 指定省份，或重新运行 -i 手动选择"
 }
 
-interactive_selection() {
-  local answer display_choice
-
-  interactive_region_selection
-
+interactive_options() {
+  local answer display_choice default_speed="$SPEED_TARGET_MBPS"
   printf '\n%s测速档位%s\n' "$C_CYAN" "$C_RESET"
-  printf '  1) 100 Mbps\n  2) 200 Mbps（默认）\n  3) 400 Mbps\n'
-  printf '  请选择 [1/2/3]: '
-  IFS= read -r answer || answer=""
-  case "${answer:-2}" in
+  if [[ -n "$NODE_ROUTE_KEY" ]]; then
+    printf '  指定节点最高支持 %s Mbps\n' "$NODE_ROUTE_MAX_MBPS"
+    if ((default_speed > NODE_ROUTE_MAX_MBPS)); then default_speed="$NODE_ROUTE_MAX_MBPS"; fi
+  fi
+  printf '  1) 100 Mbps\n  2) 200 Mbps\n  3) 400 Mbps\n'
+  printf '  请选择 [1/2/3，默认 %s Mbps]: ' "$default_speed"
+  IFS= read -r answer || die "已取消手动选择"
+  case "${answer:-$default_speed}" in
     1|100) SPEED_TARGET_MBPS=100 ;;
     2|200) SPEED_TARGET_MBPS=200 ;;
     3|400) SPEED_TARGET_MBPS=400 ;;
     *) die "无效的测速档位: $answer" ;;
   esac
-
   if [[ -z "$NODEQUALITY_URL" ]]; then
     printf '\n%s结果展示%s\n' "$C_CYAN" "$C_RESET"
     printf '  1) 独立测速结果（默认）\n  2) 关联已有 NodeQuality 报告\n'
     printf '  请选择 [1/2]: '
-    IFS= read -r display_choice || display_choice=""
+    IFS= read -r display_choice || die "已取消手动选择"
     case "${display_choice:-1}" in
       1) ;;
       2)
         printf '  NodeQuality 报告 URL: '
-        IFS= read -r NODEQUALITY_URL || NODEQUALITY_URL=""
+        IFS= read -r NODEQUALITY_URL || die "已取消手动选择"
         [[ -n "$NODEQUALITY_URL" ]] || die "没有输入 NodeQuality 报告 URL"
         ;;
       *) die "无效的结果展示选项: $display_choice" ;;
@@ -543,11 +542,11 @@ interactive_selection() {
 }
 
 prepare_speed_selection() {
-  local should_interact=0
-  local should_prompt_region=0
-  local bsg_requested=0
   local run_command
 
+  if ((INTERACTIVE_MODE == 1)) && [[ ! -t 0 ]]; then
+    die "-i/--interactive 需要可输入的终端；自动运行请去掉 -i，并用 -p、-s、--nq 指定选项"
+  fi
   if [[ "${REGION_INPUT,,}" == "auto" ]]; then
     REGION_INPUT=""
   fi
@@ -557,54 +556,36 @@ prepare_speed_selection() {
       REGION_INPUT="$NODE_ROUTE_REGION"
       info "指定节点登记在 $(region_name "$NODE_ROUTE_REGION") ($NODE_ROUTE_REGION)，已自动采用该省份"
     fi
-    if [[ "${REGION_INPUT//[[:space:]]/}" =~ ^([Bb][Ss][Gg]|北上广)$ ]]; then
-      die "--node 只能使用节点登记的一个省份，不能与 bsg 一起使用"
-    fi
     normalize_regions "$REGION_INPUT"
     if [[ "$SELECTED_REGION_CODES" != "$NODE_ROUTE_REGION" ]]; then
       die "--node 指定节点登记在 $(region_name "$NODE_ROUTE_REGION") ($NODE_ROUTE_REGION)，不能用于 -p $SELECTED_REGION_CODES"
     fi
   else
-    if [[ "${REGION_INPUT//[[:space:]]/}" =~ ^([Bb][Ss][Gg]|北上广)$ ]]; then
-      bsg_requested=1
+    if [[ -z "$REGION_INPUT" || "$INTERACTIVE_MODE" -eq 1 ]]; then
+      detect_auto_region || true
     fi
-    if ((ORIGINAL_ARG_COUNT == 0)) && [[ -t 0 ]]; then
-      should_interact=1
-    elif [[ -z "$REGION_INPUT" && -t 0 ]]; then
-      should_prompt_region=1
-    fi
-
-    if [[ -z "$REGION_INPUT" || "$should_interact" -eq 1 || "$bsg_requested" -eq 1 ]]; then
-      if ((bsg_requested == 1)); then
-        detect_auto_region quiet || true
-      else
-        detect_auto_region || true
-      fi
-    fi
-    if [[ -z "$REGION_INPUT" && -z "$AUTO_REGION_CODE" ]]; then
+    if ((INTERACTIVE_MODE == 1)); then
+      interactive_region_selection
+    elif [[ -z "$REGION_INPUT" && -z "$AUTO_REGION_CODE" ]]; then
       run_command=$(entry_command)
       printf '%s[X]%s 无法自动确定测速地区；请先用 -l/--list-provinces 查看代码，再用 -p/--province 指定。\n' \
         "$C_RED" "$C_RESET" >&2
-      printf '  查看地区：%s -l\n  指定地区：%s -p hb\n' "$run_command" "$run_command" >&2
+      printf '  查看地区：%s -l\n  指定地区：%s -p hb\n  手动选择：%s -i\n' \
+        "$run_command" "$run_command" "$run_command" >&2
       exit 1
     fi
-    if ((should_interact == 1)); then
-      interactive_selection
-    elif ((should_prompt_region == 1)); then
-      interactive_region_selection
-    elif [[ -z "$REGION_INPUT" ]]; then
+    if [[ -z "$REGION_INPUT" ]]; then
       REGION_INPUT="$AUTO_REGION_CODE"
       [[ -n "$REGION_INPUT" ]] || die "无法自动确定 SSH 来源地区，请使用 -p/--province 指定"
       info "SSH 来源 $SSH_CLIENT_IP，自动选择 $AUTO_REGION_NAME ($AUTO_REGION_CODE)"
-    elif ((bsg_requested == 1)); then
-      if [[ -n "$AUTO_REGION_CODE" ]]; then
-        info "SSH 来源 $SSH_CLIENT_IP，bsg 将选择 $AUTO_REGION_NAME、北京、上海和广东并自动去重"
-      else
-        warn "SSH 来源 ${SSH_CLIENT_IP:-未知} 未匹配到当前公共测速地区；bsg 将只选择北京、上海和广东"
-      fi
     fi
 
     normalize_regions "$REGION_INPUT"
+  fi
+  if ((INTERACTIVE_MODE == 1)); then interactive_options; fi
+  if [[ -n "$NODE_ROUTE_KEY" ]]; then
+    ((SPEED_TARGET_MBPS <= NODE_ROUTE_MAX_MBPS)) \
+      || die "指定节点最高支持 ${NODE_ROUTE_MAX_MBPS} Mbps，请降低 -s/--speed"
   fi
   select_run_families
   if [[ -n "$NODE_ROUTE_KEY" ]]; then
@@ -655,8 +636,6 @@ resolve_node_route() {
     || die "节点服务返回了无效的 Route Key 信息"
   ((NODE_ROUTE_HAS_V4 == 1 || NODE_ROUTE_HAS_V6 == 1)) \
     || die "指定节点没有登记可用的 IPv4 或 IPv6"
-  ((SPEED_TARGET_MBPS <= NODE_ROUTE_MAX_MBPS)) \
-    || die "指定节点最高支持 ${NODE_ROUTE_MAX_MBPS} Mbps，请降低 -s/--speed"
 }
 
 has_ipv4_connectivity() {
@@ -750,7 +729,6 @@ select_run_families() {
 }
 
 parse_args() {
-  ORIGINAL_ARG_COUNT=$#
   while (($# > 0)); do
     case "$1" in
       -p|--province)
@@ -769,6 +747,10 @@ parse_args() {
         ;;
       --speed=*)
         SPEED_TARGET_MBPS="${1#*=}"
+        shift
+        ;;
+      -i|--interactive)
+        INTERACTIVE_MODE=1
         shift
         ;;
       -v4|--ipv4)
@@ -816,7 +798,7 @@ parse_args() {
         printf 'SpeedQuality %s\nProbe %s\n' "$SPEEDQUALITY_VERSION" "$PROBE_VERSION"
         exit 0
         ;;
-      --mode|--mode=*|--duration|--duration=*|-y|--yes|--interactive|-4|--v4|--no-ipv6|-6|--v6|-b|--dual|-n|-t|--target|--target=*|-r|--region|--regions|--points|--list-regions|-V|--all)
+      --mode|--mode=*|--duration|--duration=*|-y|--yes|-4|--v4|--no-ipv6|-6|--v6|-b|--dual|-n|-t|--target|--target=*|-r|--region|--regions|--points|--list-regions|-V|--all)
         die "参数 $1 已移除；请使用 --help 查看当前参数"
         ;;
       --)
