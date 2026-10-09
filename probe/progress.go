@@ -149,7 +149,7 @@ func progressTips(nodeQualityEnabled bool) []usageTip {
 		{"用 -s 100 / 200 / 400 选择限速档位", 1},
 		{"默认测 IPv4/IPv6；-v4 或 -v6 可单独测", 1},
 		{"速度后的 ✓ 表示达到所选档位，并非峰值", 1},
-		{"测速不会安装系统软件或启动后台服务", 1},
+		{"测速结束后自动清理本次临时文件", 1},
 		{"用 -l 查看地区代码，-h 查看完整用法", 1},
 	}
 	if nodeQualityEnabled {
