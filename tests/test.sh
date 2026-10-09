@@ -367,6 +367,33 @@ test_ipv6_only_uses_v6_control_plane() {
   pass '仅 IPv6 测速的会话、租约和报告上传全部使用 IPv6'
 }
 
+test_node_directory_error_is_explained_without_retry() {
+  local mock_bin="$TEST_DIR/mock-empty-directory-bin"
+  local log="$TEST_DIR/empty-directory.log"
+  local output="$TEST_DIR/empty-directory.out"
+  mkdir -p "$mock_bin"
+  ln -s "$FIXTURES/mock-platform-curl.sh" "$mock_bin/curl"
+
+  if env PATH="$mock_bin:$PATH" \
+    SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
+    SPEEDQUALITY_PROBE_BIN="$MOCK_PROBE" \
+    SPEEDQUALITY_HAS_IPV4=1 \
+    SPEEDQUALITY_HAS_IPV6=0 \
+    MOCK_PLATFORM_LOG="$log" \
+    MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
+    MOCK_PLATFORM_LEASE_ERROR="node_directory_unavailable" \
+    bash "$RUNNER" -p hb >"$output" 2>&1; then
+    fail '节点目录为空时测速脚本仍成功退出'
+  fi
+
+  assert_contains "$output" '湖北/v4 当前地区暂无可用测速节点（node_directory_unavailable）'
+  assert_contains "$output" '请根据上方节点提示调整地区、IP 类型或稍后重试'
+  [[ "$(grep -Fc 'lease v4 ' "$log")" == "1" ]] \
+    || fail '节点目录为空时不应立即重试'
+  assert_not_contains "$output" '将重试节点调度'
+  pass '节点目录为空时显示明确原因且不做无效重试'
+}
+
 test_bsg_preset_and_province_limit() {
   local args="$TEST_DIR/bsg-args.txt"
   local output="$TEST_DIR/bsg.out"
@@ -452,23 +479,47 @@ test_exact_community_node_route() {
 test_traffic_estimate_and_measurement() {
   local netdev="$TEST_DIR/netdev"
   local output="$TEST_DIR/traffic.out"
+  local mock_bin="$TEST_DIR/mock-download-bin"
+  local checksums="$TEST_DIR/mock-checksums.txt"
+  local platform_log="$TEST_DIR/download-platform.log"
+  local probe_sha probe_arch
+  mkdir -p "$mock_bin"
+  ln -s "$FIXTURES/mock-platform-curl.sh" "$mock_bin/curl"
+  probe_sha=$(sha256sum "$MOCK_PROBE" | awk '{print $1}')
+  case "$(uname -m)" in
+    x86_64|amd64) probe_arch="amd64" ;;
+    aarch64|arm64) probe_arch="arm64" ;;
+    *) fail '流量测试运行在不支持的 CPU 架构' ;;
+  esac
+  printf '%s  sqprobe-linux-amd64\n%s  sqprobe-linux-arm64\n' \
+    "$probe_sha" "$probe_sha" > "$checksums"
   printf '%s\n' \
     'Inter-|   Receive                                                |  Transmit' \
     ' face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed' \
     '  eth0: 1000 0 0 0 0 0 0 0 2000 0 0 0 0 0 0 0' \
     > "$netdev"
 
-  report_env \
+  env PATH="$mock_bin:$PATH" \
+    SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
+    SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.1" \
+    SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
+    SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
+    MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
+    MOCK_PLATFORM_CHECKSUMS_FILE="$checksums" MOCK_PLATFORM_PROBE_SOURCE="$MOCK_PROBE" \
+    MOCK_DOWNLOAD_NETDEV_FILE="$netdev" \
     SPEEDQUALITY_NETDEV_FILE="$netdev" SPEEDQUALITY_NETWORK_INTERFACES=eth0 \
     MOCK_NETDEV_FILE="$netdev" MOCK_NETDEV_AFTER_RX=100001000 \
     MOCK_NETDEV_AFTER_TX=50002000 MOCK_TARGET_MBPS=100 \
     bash "$RUNNER" -p hb -s 100 >"$output" 2>&1
 
   assert_contains "$output" '上传、下载各 100 Mbps 上限估算约 525.00 MB'
+  assert_contains "$output" "下载 SpeedQuality 探测器 v1.0.1 ($probe_arch)"
   assert_contains "$output" '实际流量: 下载 100.00 MB，上传 50.00 MB，合计 150.00 MB'
   assert_contains "$output" '统计接口: eth0'
+  assert_contains "$output" '本次 SpeedQuality 执行期间网卡差值'
   assert_contains "$output" '可能包含同期其它进程流量'
-  pass '运行前估算流量并按网卡计数器统计实际流量'
+  pass '运行前估算流量，并把首次下载探测器计入实际流量'
 }
 
 test_chinese_provinces_and_city_rejection() {
@@ -498,6 +549,23 @@ test_foreign_ssh_requires_manual_region() {
   assert_contains "$TEST_DIR/foreign.out" '不在支持的中国省级地区内'
   assert_contains "$TEST_DIR/foreign.out" '-p/--province'
   pass '境外 SSH 来源要求手动指定省份'
+}
+
+test_foreign_ssh_interactive_prompt_does_not_offer_bsg() {
+  local output="$TEST_DIR/foreign-interactive.out"
+  local command
+  command -v script >/dev/null 2>&1 || fail '缺少伪终端测试命令 script'
+  printf -v command \
+    'env TERM=dumb SPEEDQUALITY_REPORT_BASE=%q SPEEDQUALITY_REPORT_RESPONSE_FILE=%q SPEEDQUALITY_PROBE_BIN=%q SPEEDQUALITY_SESSION_TOKEN=%q SPEEDQUALITY_LEASE_DIR=%q SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 SPEEDQUALITY_SSH_CLIENT_IP=8.8.8.8 SPEEDQUALITY_GEO_RESPONSE_FILE=%q bash %q' \
+    "$REPORT_BASE" "$REPORT_RESPONSE" "$MOCK_PROBE" \
+    'abcdefghijklmnopqrstuvwxyzABCDEFGH12345678' "$LEASE_DIR" "$FOREIGN_GEO" "$RUNNER"
+
+  if ! printf 'hb\n\n\n' | script -qefc "$command" /dev/null >"$output" 2>&1; then
+    fail '境外 SSH 来源交互选择测试失败'
+  fi
+  assert_contains "$output" '测速地区 [无默认值，可填 hb 或 hb,bj，最多 5 个]'
+  assert_not_contains "$output" '无默认值，可填 bsg'
+  pass '境外 SSH 来源的交互提示不再推荐不可用的 bsg'
 }
 
 test_verified_nodequality() {
@@ -714,7 +782,21 @@ test_worker_injected_report_base() {
     bash "$injected" -p hb >"$TEST_DIR/injected-base.out" 2>&1
   assert_contains "$TEST_DIR/injected-base.out" "展示链接: $REPORT_PAGE"
   assert_not_contains "$TEST_DIR/injected-base.out" '当前入口未配置分享服务'
+  bash "$injected" --help >"$TEST_DIR/injected-help.out" 2>&1
+  assert_contains "$TEST_DIR/injected-help.out" \
+    "bash <(curl -fsSL $REPORT_BASE/run) -p hb -s 200"
   pass 'Worker 注入的域名会启用分享服务'
+}
+
+test_worker_injected_node_installer_help() {
+  local injected="$TEST_DIR/install-node-injected.sh"
+  sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.1|g' \
+    "$ROOT_DIR/install-node.sh" > "$injected"
+  bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
+  assert_contains "$TEST_DIR/install-node-help.out" \
+    "bash <(curl -fsSL $REPORT_BASE/install-node)"
+  pass '节点安装器帮助显示 Worker 注入的真实一键命令'
 }
 
 test_version_and_safe_cleanup() {
@@ -723,8 +805,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.0'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.0'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.1'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.1'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
@@ -767,11 +849,13 @@ test_speed_aliases_and_validation
 test_ip_family_selection
 test_default_dual_uses_family_bound_sessions
 test_ipv6_only_uses_v6_control_plane
+test_node_directory_error_is_explained_without_retry
 test_bsg_preset_and_province_limit
 test_exact_community_node_route
 test_traffic_estimate_and_measurement
 test_chinese_provinces_and_city_rejection
 test_foreign_ssh_requires_manual_region
+test_foreign_ssh_interactive_prompt_does_not_offer_bsg
 test_verified_nodequality
 test_disabled_nodequality_binding_falls_back_before_fetch
 test_nodequality_does_not_require_python
@@ -785,6 +869,7 @@ test_nodequality_snapshot_is_sanitized_and_allowlisted
 test_nodequality_archive_member_limit
 test_report_failure_falls_back_to_image
 test_worker_injected_report_base
+test_worker_injected_node_installer_help
 test_version_and_safe_cleanup
 test_removed_options_and_no_markdown
 

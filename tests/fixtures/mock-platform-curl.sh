@@ -8,6 +8,7 @@ curl_family=""
 lease_family=""
 authorization=""
 write_out=""
+response_status="200"
 
 while (($#)); do
   case "$1" in
@@ -47,6 +48,19 @@ done
 
 [[ -n "$output_file" && -n "$url" && -n "${MOCK_PLATFORM_LOG:-}" ]]
 case "$url" in
+  */checksums.txt)
+    cp -- "${MOCK_PLATFORM_CHECKSUMS_FILE:?}" "$output_file"
+    ;;
+  */sqprobe-linux-amd64|*/sqprobe-linux-arm64)
+    cp -- "${MOCK_PLATFORM_PROBE_SOURCE:?}" "$output_file"
+    if [[ -n "${MOCK_DOWNLOAD_NETDEV_FILE:-}" ]]; then
+      cat > "$MOCK_DOWNLOAD_NETDEV_FILE" <<EOF
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+  eth0: ${MOCK_DOWNLOAD_AFTER_RX:-6001000} 0 0 0 0 0 0 0 ${MOCK_DOWNLOAD_AFTER_TX:-2000} 0 0 0 0 0 0 0
+EOF
+    fi
+    ;;
   */api/session)
     printf 'session %s\n' "$curl_family" >> "$MOCK_PLATFORM_LOG"
     if [[ "$curl_family" == "-6" ]]; then
@@ -58,7 +72,12 @@ case "$url" in
   */api/node-lease)
     printf 'lease %s %s %s\n' "$lease_family" "$curl_family" "$authorization" \
       >> "$MOCK_PLATFORM_LOG"
-    cp -- "${MOCK_PLATFORM_LEASE_DIR:?}/default-${lease_family}.json" "$output_file"
+    if [[ -n "${MOCK_PLATFORM_LEASE_ERROR:-}" ]]; then
+      printf '{"error":"%s"}\n' "$MOCK_PLATFORM_LEASE_ERROR" > "$output_file"
+      response_status="${MOCK_PLATFORM_LEASE_HTTP_STATUS:-502}"
+    else
+      cp -- "${MOCK_PLATFORM_LEASE_DIR:?}/default-${lease_family}.json" "$output_file"
+    fi
     ;;
   */api/results)
     printf 'report %s %s\n' "$curl_family" "$authorization" >> "$MOCK_PLATFORM_LOG"
@@ -71,5 +90,5 @@ case "$url" in
 esac
 
 if [[ -n "$write_out" ]]; then
-  printf '200'
+  printf '%s' "$response_status"
 fi

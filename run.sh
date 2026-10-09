@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.0.0"
-readonly FALLBACK_PROBE_VERSION="v1.0.0"
+readonly SPEEDQUALITY_VERSION="1.0.1"
+readonly FALLBACK_PROBE_VERSION="v1.0.1"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NODEQUALITY_API="https://api.nodequality.com/api/v1"
@@ -65,6 +65,9 @@ TRAFFIC_RX_BYTES=""
 TRAFFIC_TX_BYTES=""
 TRAFFIC_TOTAL_BYTES=""
 TRAFFIC_INTERFACES=""
+LEASE_ERROR_CODE=""
+LEASE_ERROR_MESSAGE=""
+LEASE_ERROR_RETRYABLE=1
 
 SESSION_TOKEN=""
 SESSION_TOKEN_V4=""
@@ -110,11 +113,15 @@ die() {
 }
 
 usage() {
-  cat <<'EOF'
+  local run_command="bash run.sh"
+  if [[ "$REPORT_BASE" != "$REPORT_BASE_PLACEHOLDER" ]] && validate_https_url "$REPORT_BASE"; then
+    run_command="bash <(curl -fsSL ${REPORT_BASE%/}/run)"
+  fi
+  cat <<EOF
 SpeedQuality - 服务器分地区测速与 NodeQuality 结果绑定工具
 
 用法:
-  bash run.sh [SpeedQuality 选项]
+  $run_command [SpeedQuality 选项]
 
 SpeedQuality 选项:
   -p, --province VALUE    省份：auto、bsg、hb、hb,bj、湖北，北京等，最多 5 个
@@ -132,12 +139,12 @@ SpeedQuality 选项:
   多个省份可使用中英文逗号或顿号分隔；单次最多 5 个，完整列表使用 --list-provinces 查看。
 
 示例:
-  bash run.sh
-  bash run.sh -p hb -s 200
-  bash run.sh -p '湖北，北京' -s 100 -v4
-  bash run.sh -p hb -s 100 -v6
-  bash run.sh -p hb --nq https://nodequality.com/r/REPORT_TOKEN
-  bash run.sh --node sqn_YOUR_ROUTE_KEY -s 200
+  $run_command
+  $run_command -p hb -s 200
+  $run_command -p '湖北，北京' -s 100 -v4
+  $run_command -p hb -s 100 -v6
+  $run_command -p hb --nq https://nodequality.com/r/REPORT_TOKEN
+  $run_command --node sqn_YOUR_ROUTE_KEY -s 200
 EOF
 }
 
@@ -444,7 +451,7 @@ detect_auto_region() {
 }
 
 interactive_region_selection() {
-  local answer default_region
+  local answer default_region default_name
   printf '\n%sSSH 来源地区%s\n' "$C_CYAN" "$C_RESET"
   if [[ -n "$AUTO_REGION_CODE" ]]; then
     printf '  检测到 %s -> %s (%s)\n' "$SSH_CLIENT_IP" "$AUTO_REGION_NAME" "$AUTO_REGION_CODE"
@@ -453,7 +460,13 @@ interactive_region_selection() {
     printf '  已检测到来源 %s，但无法自动映射地区。\n' "$SSH_CLIENT_IP"
   fi
   default_region="${REGION_INPUT:-$AUTO_REGION_CODE}"
-  printf '  测速地区 [默认 %s，可填 bsg 或 hb,bj，最多 5 个]: ' "${default_region:-无}"
+  if [[ -n "$default_region" ]]; then
+    default_name=$(region_name "$default_region" 2>/dev/null || printf '%s' "$default_region")
+    printf '  测速地区 [默认 %s (%s)，可填 bsg 或 hb,bj，最多 5 个]: ' \
+      "$default_name" "$default_region"
+  else
+    printf '  测速地区 [无默认值，可填 hb 或 hb,bj，最多 5 个]: '
+  fi
   IFS= read -r answer || answer=""
   REGION_INPUT="${answer:-$default_region}"
   [[ -n "$REGION_INPUT" ]] || die "无法自动确定地区，请重新运行并使用 -p/--province 指定"
@@ -1199,7 +1212,7 @@ finish_traffic_measurement() {
   TRAFFIC_TOTAL_BYTES=$((TRAFFIC_RX_BYTES + TRAFFIC_TX_BYTES))
   interface_display="${TRAFFIC_INTERFACES// /, }"
   success "实际流量: 下载 $(format_bytes "$TRAFFIC_RX_BYTES")，上传 $(format_bytes "$TRAFFIC_TX_BYTES")，合计 $(format_bytes "$TRAFFIC_TOTAL_BYTES")"
-  info "统计接口: $interface_display；数值为测速期间网卡差值，可能包含同期其它进程流量"
+  info "统计接口: $interface_display；数值为本次 SpeedQuality 执行期间网卡差值，可能包含同期其它进程流量"
 }
 
 request_speed_session_token() {
@@ -1275,14 +1288,23 @@ request_node_lease() {
   local session_token="$SESSION_TOKEN_V4"
   local preparation=""
   local status=""
+  local error_code=""
   local poll
   local -a preparation_args=()
+  LEASE_ERROR_CODE=""
+  LEASE_ERROR_MESSAGE=""
+  LEASE_ERROR_RETRYABLE=1
   if [[ -n "${SPEEDQUALITY_LEASE_DIR:-}" ]]; then
     fixture="${SPEEDQUALITY_LEASE_DIR%/}/${region}-${family}.json"
     if [[ ! -r "$fixture" ]]; then
       fixture="${SPEEDQUALITY_LEASE_DIR%/}/default-${family}.json"
     fi
-    [[ -r "$fixture" ]] || return 1
+    if [[ ! -r "$fixture" ]]; then
+      LEASE_ERROR_CODE="lease_fixture_unavailable"
+      LEASE_ERROR_MESSAGE="测试节点租约不可用"
+      LEASE_ERROR_RETRYABLE=0
+      return 1
+    fi
     cp -- "$fixture" "$destination"
     return 0
   fi
@@ -1295,7 +1317,7 @@ request_node_lease() {
     if [[ -n "$preparation" ]]; then
       preparation_args=(--data-urlencode "preparation=$preparation")
     fi
-    status=$(curl "$curl_family" --proto '=https' --tlsv1.2 -sS \
+    if ! status=$(curl "$curl_family" --proto '=https' --tlsv1.2 -sS \
       --connect-timeout 8 --max-time 30 \
       --write-out '%{http_code}' \
       -X POST \
@@ -1304,18 +1326,67 @@ request_node_lease() {
       --data-urlencode "region=$region" \
       --data-urlencode "family=$family" \
       "${preparation_args[@]}" \
-      "${REPORT_BASE%/}/api/node-lease" -o "$destination") || return 1
+      "${REPORT_BASE%/}/api/node-lease" -o "$destination"); then
+      LEASE_ERROR_CODE="network_error"
+      LEASE_ERROR_MESSAGE="无法连接节点调度服务"
+      LEASE_ERROR_RETRYABLE=1
+      return 1
+    fi
     if [[ "$status" == "200" ]]; then
       return 0
     fi
     if [[ "$status" != "202" ]]; then
+      error_code=$(json_string_field "$destination" error 2>/dev/null || true)
+      LEASE_ERROR_CODE="${error_code:-http_error}"
+      case "$LEASE_ERROR_CODE" in
+        node_directory_unavailable)
+          LEASE_ERROR_MESSAGE="当前地区暂无可用测速节点"
+          LEASE_ERROR_RETRYABLE=0
+          ;;
+        node_capacity_exhausted|public_quota_exhausted)
+          LEASE_ERROR_MESSAGE="当前地区的测速节点繁忙或公共额度已用尽"
+          LEASE_ERROR_RETRYABLE=1
+          ;;
+        node_verification_failed)
+          LEASE_ERROR_MESSAGE="候选节点未通过可用性或地区校验"
+          LEASE_ERROR_RETRYABLE=0
+          ;;
+        specified_node_unavailable)
+          LEASE_ERROR_MESSAGE="指定的 SQ 节点当前不可用"
+          LEASE_ERROR_RETRYABLE=0
+          ;;
+        capacity_store_unavailable|community_node_service_unavailable)
+          LEASE_ERROR_MESSAGE="节点调度服务暂时不可用"
+          LEASE_ERROR_RETRYABLE=1
+          ;;
+        lease_preparation_unavailable)
+          LEASE_ERROR_MESSAGE="节点准备状态已失效"
+          LEASE_ERROR_RETRYABLE=1
+          ;;
+        invalid_session|session_expired|session_source_mismatch)
+          LEASE_ERROR_MESSAGE="测速会话已失效或来源不一致"
+          LEASE_ERROR_RETRYABLE=0
+          ;;
+        *)
+          LEASE_ERROR_MESSAGE="节点调度请求失败（HTTP ${status:-000}）"
+          LEASE_ERROR_RETRYABLE=1
+          ;;
+      esac
       return 1
     fi
     preparation=$(sed -n 's/.*"preparation"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-]*\)".*/\1/p' \
       "$destination" | head -n 1)
-    [[ "$preparation" =~ ^lease_[A-Za-z0-9_-]{16,80}$ ]] || return 1
+    if [[ ! "$preparation" =~ ^lease_[A-Za-z0-9_-]{16,80}$ ]]; then
+      LEASE_ERROR_CODE="invalid_preparation_response"
+      LEASE_ERROR_MESSAGE="节点调度服务返回了无效的准备状态"
+      LEASE_ERROR_RETRYABLE=0
+      return 1
+    fi
     sleep 1
   done
+  LEASE_ERROR_CODE="preparation_timeout"
+  LEASE_ERROR_MESSAGE="等待测速节点准备超时"
+  LEASE_ERROR_RETRYABLE=0
   return 1
 }
 
@@ -1326,6 +1397,10 @@ run_speedtest() {
   local completed=0 failed=0
   local -a region_codes
 
+  TRAFFIC_INTERFACES=$(detect_traffic_interfaces || true)
+  if [[ -n "$TRAFFIC_INTERFACES" ]]; then
+    traffic_before=$(read_network_counters || true)
+  fi
   PROBE_BINARY=$(resolve_probe_binary)
   create_speed_session
   SPEED_LOG="$TEMP_DIR/speedquality.log"
@@ -1340,10 +1415,6 @@ run_speedtest() {
     diagnostic_args=(--diagnostic-log "$SPEED_DIAGNOSTIC_LOG")
     info "诊断事件将写入 $SPEED_DIAGNOSTIC_LOG"
   fi
-  TRAFFIC_INTERFACES=$(detect_traffic_interfaces || true)
-  if [[ -n "$TRAFFIC_INTERFACES" ]]; then
-    traffic_before=$(read_network_counters || true)
-  fi
   IFS=',' read -r -a region_codes <<< "$SELECTED_REGION_CODES"
   info "开始运行 SpeedQuality 测速"
   for region in "${region_codes[@]}"; do
@@ -1353,7 +1424,13 @@ run_speedtest() {
         lease_file="$TEMP_DIR/lease-${region}-${family}-${attempt}.json"
         attempt_result="$TEMP_DIR/result-${region}-${family}-${attempt}.ndjson"
         if ! request_node_lease "$region" "$family" "$lease_file"; then
-          warn "${region}/${family} 获取节点失败（第 ${attempt} 次）"
+          warn "$(region_name "$region")/${family} ${LEASE_ERROR_MESSAGE:-获取测速节点失败}（${LEASE_ERROR_CODE:-unknown}）"
+          if ((LEASE_ERROR_RETRYABLE == 0)); then
+            break
+          fi
+          if ((attempt < 2)); then
+            info "${region}/${family} 将重试节点调度（${attempt}/2）"
+          fi
           continue
         fi
         set +e
@@ -1378,7 +1455,7 @@ run_speedtest() {
   done
 
   finish_traffic_measurement "$traffic_before"
-  ((completed > 0)) || die "所有测速任务均失败"
+  ((completed > 0)) || die "所有测速任务均失败；请根据上方节点提示调整地区、IP 类型或稍后重试"
   if ((failed > 0)); then
     warn "$failed 个地区/IP 类型测速失败，报告会保留失败状态"
   fi

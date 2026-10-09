@@ -210,7 +210,7 @@ SpeedQuality 是面向 Linux VPS 的区域网络评测工具。用户从待测�
 - `[已处理]` 不把第三方接口称为“Taier 协议”，准确区分全球网测兼容层和 SQ 原生协议。
 - `[已处理]` `.gitignore` 排除私有 Core、真实节点数据、本地缓存、预览产物和部署密钥；公开
   配置只保留 Cloudflare ID 与仓库名占位符。
-- `[待处理]` 建立可读的 Git 提交历史并推送 GitHub；当前文件尚未提交。
+- `[已处理]` 建立可读的 Git 提交历史并推送 GitHub。
 - `[已处理]` 项目名确定为 SpeedQuality，公开仓库名为 `speedquality`，正式域名为
   `sq.yolo2.cc`，首个发布版本为 `v1.0.0`。
 

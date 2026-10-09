@@ -11,11 +11,15 @@ INSTALL_ONLY=0
 TEMP_DIR=""
 
 usage() {
-  cat <<'EOF'
+  local install_command="bash install-node.sh"
+  if [[ "$SERVICE_BASE" != "$SERVICE_BASE_PLACEHOLDER" && "$SERVICE_BASE" =~ ^https://[^/]+/?$ ]]; then
+    install_command="bash <(curl -fsSL ${SERVICE_BASE%/}/install-node)"
+  fi
+  cat <<EOF
 SpeedQuality 节点安装器
 
 用法:
-  bash <(curl -fsSL https://<SpeedQuality 域名>/install-node)
+  $install_command
 
 选项:
       --install-only    只安装 sq-node，不进入首次设置

@@ -839,6 +839,36 @@ test("invalid data from the private node service is rejected", async () => {
   assert.equal(await response.text(), "Node service returned invalid data\n");
 });
 
+test("safe node directory errors are exposed to the CLI", async () => {
+  const DB = new FakeD1();
+  const NODE_CORE = {
+    fetch: async () => Response.json(
+      { error: "node_directory_unavailable" },
+      { status: 502 },
+    ),
+  };
+  const env = { DB, NODE_CORE, RATE_LIMIT_SALT: "test-salt" };
+  const token = (await (await worker.fetch(sessionRequest(), env)).text()).trim();
+  const response = await worker.fetch(leaseRequest(token), env);
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), { error: "node_directory_unavailable" });
+});
+
+test("unknown private node errors remain hidden", async () => {
+  const DB = new FakeD1();
+  const NODE_CORE = {
+    fetch: async () => Response.json(
+      { error: "private_upstream_detail", endpoint: "http://192.0.2.50:8080" },
+      { status: 503 },
+    ),
+  };
+  const env = { DB, NODE_CORE, RATE_LIMIT_SALT: "test-salt" };
+  const token = (await (await worker.fetch(sessionRequest(), env)).text()).trim();
+  const response = await worker.fetch(leaseRequest(token), env);
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), { error: "node_service_unavailable" });
+});
+
 test("unsupported carriers from the private node service are rejected", async () => {
   const DB = new FakeD1();
   const NODE_CORE = new FakeNodeCore();

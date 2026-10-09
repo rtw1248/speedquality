@@ -89,8 +89,8 @@ routes = [{ pattern = "sq.yolo2.cc", custom_domain = true }]
 [vars]
 GITHUB_OWNER = "YOUR_GITHUB_USER"
 GITHUB_REPO = "speedquality"
-GITHUB_REF = "v1.0.0"
-PROBE_VERSION = "v1.0.0"
+GITHUB_REF = "v1.0.1"
+PROBE_VERSION = "v1.0.1"
 RESULT_TTL_DAYS = "90"
 DAILY_RESULT_LIMIT = "100"
 DAILY_SESSION_LIMIT = "20"

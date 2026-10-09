@@ -18,6 +18,15 @@ const SESSION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const NODE_ROUTE_PATTERN = /^sqn_[A-Za-z0-9_-]{24,96}$/;
 const NODE_API_TOKEN_PATTERN = /^sqa_[A-Za-z0-9_-]{24,128}$/;
 const COMMUNITY_NODE_ID_PATTERN = /^[a-f0-9]{32}$/;
+const PUBLIC_LEASE_ERRORS = new Map([
+  ["node_directory_unavailable", 502],
+  ["node_capacity_exhausted", 503],
+  ["node_verification_failed", 503],
+  ["specified_node_unavailable", 503],
+  ["capacity_store_unavailable", 503],
+  ["community_node_service_unavailable", 503],
+  ["lease_preparation_unavailable", 410],
+]);
 const REGION_CODES = new Set([
   "bj", "tj", "he", "sx", "nm", "ln", "jl", "hl", "sh", "js", "zj", "ah",
   "fj", "jx", "sd", "ha", "hb", "hn", "gd", "gx", "hi", "cq", "sc", "gz",
@@ -170,7 +179,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.0").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.1").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -1363,7 +1372,11 @@ async function requestNodeLease(request, env) {
       return jsonResponse(lease, 202, { "retry-after": "1" });
     }
     if (!response.ok) {
-      return textResponse("Node service is unavailable\n", 502, { "cache-control": "no-store" });
+      const publicError = String(lease?.error || "");
+      if (PUBLIC_LEASE_ERRORS.has(publicError)) {
+        return jsonResponse({ error: publicError }, PUBLIC_LEASE_ERRORS.get(publicError));
+      }
+      return jsonResponse({ error: "node_service_unavailable" }, 502);
     }
   } else {
     lease = await createStaticNodeLease(input, staticConfiguration, now);
