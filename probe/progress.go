@@ -153,7 +153,7 @@ func progressTips(nodeQualityEnabled bool) []usageTip {
 		{"用 -l 查看地区代码，-h 查看完整用法", 1},
 	}
 	if nodeQualityEnabled {
-		tips = append(tips, usageTip{"用 --nq 报告链接 关联 NodeQuality 报告", 4})
+		tips = append(tips, usageTip{"用 --nq 报告链接 关联 NodeQuality 报告", 8})
 	}
 	return tips
 }

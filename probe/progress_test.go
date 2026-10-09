@@ -72,6 +72,11 @@ func TestProgressTipsMatchFeatureAvailabilityAndRotate(t *testing.T) {
 	if tips[0].weight <= tips[2].weight || !strings.Contains(tips[len(tips)-1].text, "--nq") {
 		t.Fatal("province and NodeQuality tips should have higher priority")
 	}
+	for _, tip := range tips[:len(tips)-1] {
+		if tip.weight >= tips[len(tips)-1].weight {
+			t.Fatal("--nq should have the highest tip priority")
+		}
+	}
 	tracker := &progressTracker{tips: tips, tipSlot: -1}
 	first := tracker.currentTip(0)
 	if tracker.currentTip(7*time.Second) != first {

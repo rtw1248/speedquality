@@ -89,12 +89,12 @@ routes = [{ pattern = "sq.yolo2.cc", custom_domain = true }]
 [vars]
 GITHUB_OWNER = "YOUR_GITHUB_USER"
 GITHUB_REPO = "speedquality"
-GITHUB_REF = "v1.0.14"
-PROBE_VERSION = "v1.0.14"
+GITHUB_REF = "v1.0.15"
+PROBE_VERSION = "v1.0.15"
 RESULT_TTL_DAYS = "90"
 DAILY_RESULT_LIMIT = "100"
 DAILY_SESSION_LIMIT = "20"
-NQ_BINDING_ENABLED = "false"
+NQ_BINDING_ENABLED = "true"
 PROMOTION_TEXT = ""
 LOG_LEVEL = "info"
 # PROMOTION_URL = "https://example.com/promotion"
@@ -248,7 +248,7 @@ API Token 需要 Workers Scripts、D1、R2 和对应域名权限。Worker Secret
 | `RESULT_TTL_DAYS` | `90` | 报告保留天数 |
 | `DAILY_RESULT_LIMIT` | `100` | 每个来源每天最多创建的报告数 |
 | `DAILY_SESSION_LIMIT` | `20` | 每个来源每天最多创建的会话数 |
-| `NQ_BINDING_ENABLED` | `false` | 是否允许读取、绑定并保存新的 NodeQuality 报告快照；基础测速验收后再开启 |
+| `NQ_BINDING_ENABLED` | `true` | 是否允许读取、绑定并保存新的 NodeQuality 报告快照；当前正式入口已开启 |
 
 将 `NQ_BINDING_ENABLED` 设为 `false` 后，`/api/features` 会立即通知新版客户端停止读取
 NodeQuality；Worker 也会把旧客户端提交的关联结果强制降级为独立 SQ 报告，且不保存快照。
