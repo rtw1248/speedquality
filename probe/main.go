@@ -74,6 +74,7 @@ func main() {
 		fmt.Sprintf("%s %s", lease.Region.Name, displayFamily(lease.Family)),
 		terminalProgressEnabled(),
 		progressTips(os.Getenv("SPEEDQUALITY_NQ_BINDING_ENABLED") == "1"),
+		os.Getenv("SPEEDQUALITY_TIP_STATE_FILE"),
 	)
 	report := runLease(ctx, lease, progress, clock.Now)
 	progress.Finish()

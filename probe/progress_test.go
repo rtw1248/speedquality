@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -24,7 +26,7 @@ func TestFormatProgressLine(t *testing.T) {
 
 func TestProgressTrackerClearsLineWhenFinished(t *testing.T) {
 	var output bytes.Buffer
-	tracker := newProgressTracker(&output, 9, "湖北 IPv4", true, nil)
+	tracker := newProgressTracker(&output, 9, "湖北 IPv4", true, nil, "")
 	tracker.Update(4, "湖北联通 / 上传测速")
 	tracker.Finish()
 	text := output.String()
@@ -83,7 +85,7 @@ func TestProgressTipsMatchFeatureAvailabilityAndRotate(t *testing.T) {
 func TestProgressTipsFitNarrowTerminalsAndClearOnFinish(t *testing.T) {
 	t.Setenv("COLUMNS", "40")
 	var output bytes.Buffer
-	tracker := newProgressTracker(&output, 9, "湖北 IPv4", true, progressTips(true))
+	tracker := newProgressTracker(&output, 9, "湖北 IPv4", true, progressTips(true), "")
 	tracker.Update(4, "湖北联通 / 上传测速")
 	tracker.render()
 	tracker.render()
@@ -108,10 +110,50 @@ func TestProgressTipsFitNarrowTerminalsAndClearOnFinish(t *testing.T) {
 	}
 
 	var redirected bytes.Buffer
-	disabled := newProgressTracker(&redirected, 9, "湖北 IPv4", false, progressTips(true))
+	disabled := newProgressTracker(&redirected, 9, "湖北 IPv4", false, progressTips(true), "")
 	disabled.Update(4, "上传测速")
 	disabled.Finish()
 	if redirected.Len() != 0 {
 		t.Fatal("disabled progress polluted redirected output")
+	}
+}
+
+func TestProgressTipsContinueAcrossIPFamiliesAndRegions(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "progress-tip.json")
+	tips := progressTips(true)
+	first := &progressTracker{tips: tips, tipSlot: -1, tipStatePath: statePath}
+	lastTip := first.currentTip(0)
+	first.saveTipState(3 * time.Second)
+	second := &progressTracker{tips: tips, tipSlot: -1, tipStatePath: statePath}
+	second.loadTipState()
+	if second.currentTip(0) != lastTip || second.currentTip(4*time.Second) != lastTip {
+		t.Fatal("IPv6 restarted the tip or its remaining display interval")
+	}
+	nextTip := second.currentTip(5 * time.Second)
+	if nextTip == lastTip {
+		t.Fatal("resumed tip did not rotate after its remaining five seconds")
+	}
+	second.saveTipState(7 * time.Second)
+	third := &progressTracker{tips: tips, tipSlot: -1, tipStatePath: statePath}
+	third.loadTipState()
+	if third.currentTip(5*time.Second) != nextTip || third.currentTip(6*time.Second) == nextTip {
+		t.Fatal("switching regions reset the tip display interval")
+	}
+
+	nq := tips[len(tips)-1]
+	first.tip = nq.text
+	first.tipSlot = 0
+	first.saveTipState(time.Second)
+	disabled := &progressTracker{tips: progressTips(false), tipSlot: -1, tipStatePath: statePath}
+	disabled.loadTipState()
+	if strings.Contains(disabled.currentTip(0), "--nq") {
+		t.Fatal("a saved tip advertised a feature that is now disabled")
+	}
+	if err := os.WriteFile(statePath, []byte(`{"text":"unknown tip","elapsed_millis":1000}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	disabled.loadTipState()
+	if disabled.tip == "unknown tip" {
+		t.Fatal("unrecognized text was loaded into the terminal")
 	}
 }

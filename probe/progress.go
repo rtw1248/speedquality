@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -21,16 +22,23 @@ type usageTip struct {
 	weight int
 }
 
+type progressTipState struct {
+	Text          string `json:"text"`
+	ElapsedMillis int64  `json:"elapsed_millis"`
+}
+
 type progressTracker struct {
-	writer    io.Writer
-	total     int
-	prefix    string
-	enabled   bool
-	startedAt time.Time
-	stop      chan struct{}
-	done      chan struct{}
-	stopOnce  sync.Once
-	tips      []usageTip
+	writer       io.Writer
+	total        int
+	prefix       string
+	enabled      bool
+	startedAt    time.Time
+	stop         chan struct{}
+	done         chan struct{}
+	stopOnce     sync.Once
+	tips         []usageTip
+	tipStatePath string
+	tipOffset    time.Duration
 
 	mu        sync.Mutex
 	completed int
@@ -49,16 +57,18 @@ func terminalProgressEnabled() bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func newProgressTracker(writer io.Writer, total int, prefix string, enabled bool, tips []usageTip) *progressTracker {
+func newProgressTracker(writer io.Writer, total int, prefix string, enabled bool, tips []usageTip, tipStatePath string) *progressTracker {
 	tracker := &progressTracker{
 		writer: writer, total: total, prefix: prefix, enabled: enabled && total > 0,
 		startedAt: time.Now(), stop: make(chan struct{}), done: make(chan struct{}),
 		tips: append([]usageTip(nil), tips...), tipSlot: -1,
+		tipStatePath: tipStatePath,
 	}
 	if !tracker.enabled {
 		close(tracker.done)
 		return tracker
 	}
+	tracker.loadTipState()
 	go tracker.loop()
 	return tracker
 }
@@ -100,6 +110,7 @@ func (tracker *progressTracker) Finish() {
 	tracker.stopOnce.Do(func() {
 		close(tracker.stop)
 		<-tracker.done
+		tracker.saveTipState(time.Since(tracker.startedAt))
 		if tracker.tipShown {
 			fmt.Fprint(tracker.writer, "\r\x1b[2K\x1b[1A")
 		}
@@ -148,12 +159,51 @@ func progressTips(nodeQualityEnabled bool) []usageTip {
 }
 
 func (tracker *progressTracker) currentTip(elapsed time.Duration) string {
-	slot := int(elapsed / progressTipInterval)
+	slot := int((elapsed + tracker.tipOffset) / progressTipInterval)
 	if slot != tracker.tipSlot {
 		tracker.tip = progressTip(tracker.tips, tracker.tip, rand.IntN)
 		tracker.tipSlot = slot
 	}
 	return tracker.tip
+}
+
+func (tracker *progressTracker) loadTipState() {
+	if tracker.tipStatePath == "" {
+		return
+	}
+	file, err := os.Open(tracker.tipStatePath)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	var state progressTipState
+	if json.NewDecoder(io.LimitReader(file, 4096)).Decode(&state) != nil ||
+		state.ElapsedMillis < 0 || state.ElapsedMillis >= progressTipInterval.Milliseconds() {
+		return
+	}
+	for _, tip := range tracker.tips {
+		if tip.text == state.Text && tip.weight > 0 {
+			tracker.tip = state.Text
+			tracker.tipOffset = time.Duration(state.ElapsedMillis) * time.Millisecond
+			tracker.tipSlot = 0
+			return
+		}
+	}
+}
+
+func (tracker *progressTracker) saveTipState(elapsed time.Duration) {
+	if tracker.tipStatePath == "" || len(tracker.tips) == 0 {
+		return
+	}
+	state := progressTipState{
+		Text:          tracker.currentTip(elapsed),
+		ElapsedMillis: ((elapsed + tracker.tipOffset) % progressTipInterval).Milliseconds(),
+	}
+	encoded, err := json.Marshal(state)
+	if err == nil {
+		// Optional display state stays in the Bash run's private temporary directory.
+		_ = os.WriteFile(tracker.tipStatePath, encoded, 0o600)
+	}
 }
 
 func progressTip(tips []usageTip, previous string, draw func(int) int) string {

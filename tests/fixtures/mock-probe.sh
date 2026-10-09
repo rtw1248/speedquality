@@ -39,6 +39,10 @@ if [[ -n "${MOCK_REFERENCE_TIMES_FILE:-}" ]]; then
   printf '%s\n' "$reference_time" >> "$MOCK_REFERENCE_TIMES_FILE"
 fi
 
+if [[ -n "${MOCK_TIP_STATES_FILE:-}" ]]; then
+  printf '%s\n' "${SPEEDQUALITY_TIP_STATE_FILE:-}" >> "$MOCK_TIP_STATES_FILE"
+fi
+
 now="${reference_time:-$(date +%s)}"
 target_mbps="${MOCK_TARGET_MBPS:-200}"
 status="ok"

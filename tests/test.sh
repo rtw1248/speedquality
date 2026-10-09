@@ -316,12 +316,16 @@ test_ip_family_selection() {
 test_partial_failure_keeps_compact_table() {
   local args="$TEST_DIR/partial-failure-args.txt"
   local output="$TEST_DIR/partial-failure.out"
+  local tip_states="$TEST_DIR/partial-failure-tip-states.txt"
   report_env SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=1 \
-    MOCK_ARGS_FILE="$args" MOCK_FAILED_FAMILY=v4 \
+    MOCK_ARGS_FILE="$args" MOCK_FAILED_FAMILY=v4 MOCK_TIP_STATES_FILE="$tip_states" \
     bash "$RUNNER" -p hb >"$output" 2>&1
   assert_line "$args" 'hb v4'
   assert_line "$args" 'hb v6'
   [[ "$(wc -l < "$args")" -eq 2 ]] || fail '测速失败后重复执行了测速'
+  [[ -s "$tip_states" && "$(head -n 1 "$tip_states")" == */progress-tip.json ]] \
+    || fail '没有传递本次运行的临时提示状态路径'
+  [[ "$(sort -u "$tip_states" | wc -l)" -eq 1 ]] || fail 'IPv4 和 IPv6 未共用提示状态'
   assert_contains "$output" '失败'
   assert_contains "$output" "分享报告: $REPORT_PAGE"
   assert_not_contains "$output" '[失败]'

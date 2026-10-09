@@ -1537,6 +1537,7 @@ run_speedtest() {
         fi
         set +e
         SPEEDQUALITY_NQ_BINDING_ENABLED="$NODEQUALITY_BINDING_ENABLED" \
+          SPEEDQUALITY_TIP_STATE_FILE="$TEMP_DIR/progress-tip.json" \
           "$PROBE_BINARY" --lease "$lease_file" --output "$attempt_result" \
           --reference-time "$(measurement_epoch)" "${diagnostic_args[@]}" | tee -a "$SPEED_LOG"
         status=${PIPESTATUS[0]}
