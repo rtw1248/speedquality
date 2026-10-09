@@ -182,7 +182,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.1.1").trim();
+  const version = String(env.PROBE_VERSION || "v1.1.2").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -2336,8 +2336,9 @@ export function renderReport(report, options = {}) {
   } else {
     content = `
     <section class="report-pane empty-state">
-      <h2>NodeQuality 快照暂不可用</h2>
-      <p>可以继续查看 <a href="${escapeHtml(report.nq_url)}" rel="noreferrer">原始 NQ 报告</a>，或切换到 SpeedQuality。</p>
+      <h2>此联合报告暂时无法展示 NQ 内容</h2>
+      <p>这里未能加载 NQ 展示副本，不代表原始报告无法访问。</p>
+      <p>可以打开 <a href="${escapeHtml(report.nq_url)}" rel="noreferrer">原始 NQ 报告</a>，或切换到速度质量。</p>
     </section>`;
   }
 

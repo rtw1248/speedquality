@@ -1526,6 +1526,7 @@ test("disabled NodeQuality binding forces old clients to a standalone report", a
 test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab", async () => {
   const DB = new FakeD1();
   const SNAPSHOTS = new FakeR2();
+  const largeText = "\u001b[32m100Mbps\u001b[0m\n".repeat(2500);
   const fields = basicFields({
     bind_status: "verified",
     nq_url: "https://nodequality.com/r/IHfGBj2jD8OT7BqBNUbCWTWV3XRIbpMB",
@@ -1543,7 +1544,7 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
         id: "all",
         title: "全部",
         format: "ansi",
-        content: "\u001b[36mNodeQuality header\u001b[0m\r\r\nAll sections",
+        content: `\u001b[36mNodeQuality header\u001b[0m\r\r\nAll sections\n${largeText}ALL-END`,
         image_url: "",
         source: "header_info.log,hardware_quality.log,ip_quality.log,net_quality.log,backroute_trace.log",
         truncated: false,
@@ -1552,7 +1553,7 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
         id: "basic",
         title: "基本信息",
         format: "ansi",
-        content: "  aligned text\n\u001b[32mBasic info\u001b[0m",
+        content: `  aligned text\n\u001b[32mBasic info\u001b[0m\n${largeText}BASIC-END`,
         image_url: "",
         source: "nodequality.md",
         truncated: false,
@@ -1591,6 +1592,8 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
     SNAPSHOTS,
     RATE_LIMIT_SALT: "test-salt",
   };
+  const snapshotBytes = new TextEncoder().encode(JSON.stringify(snapshot)).byteLength;
+  assert.ok(snapshotBytes > 96 * 1024 && snapshotBytes <= 256 * 1024);
   const response = await submitMultipartResult(fields, snapshot, env);
   assert.equal(response.status, 201);
   assert.equal(response.headers.get("x-snapshot-store"), "stored");
@@ -1636,6 +1639,8 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
   )).text();
   assert.match(allPage, /aria-current="page">全部/);
   assert.match(allPage, /NodeQuality header/);
+  assert.match(allPage, /ALL-END/);
+  assert.match(allPage, /BASIC-END/);
   assert.doesNotMatch(allPage, /\r/);
   assert.doesNotMatch(allPage, /aria-label="推广"/);
   assert.equal((allPage.match(/>复制文本<\/button>/g) || []).length, 2);
@@ -1713,7 +1718,8 @@ test("NodeQuality tab falls back to the original report when R2 is unavailable",
     new Request(`${reportUrl}?tab=nodequality`),
     { DB },
   )).text();
-  assert.match(page, /NodeQuality 快照暂不可用/);
+  assert.match(page, /此联合报告暂时无法展示 NQ 内容/);
+  assert.match(page, /不代表原始报告无法访问/);
   assert.match(page, /查看 NodeQuality 原始报告/);
   assert.doesNotMatch(page, /aria-label="推广"/);
   assert.doesNotMatch(page, /今日速度检测量/);

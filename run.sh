@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.1.1"
-readonly FALLBACK_PROBE_VERSION="v1.1.1"
+readonly SPEEDQUALITY_VERSION="1.1.2"
+readonly FALLBACK_PROBE_VERSION="v1.1.2"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -13,6 +13,7 @@ readonly DEFAULT_GEO_API="https://ipwho.is"
 readonly DEFAULT_REPORT_BASE="__SPEEDQUALITY_REPORT_BASE__"
 readonly REPORT_BASE_PLACEHOLDER="__SPEEDQUALITY_""REPORT_BASE__"
 readonly MAX_TIME_GAP_MINUTES=60
+readonly MAX_NODEQUALITY_SNAPSHOT_BYTES=$((256 * 1024))
 readonly NODEQUALITY_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36"
 readonly SPEED_DURATION_SECONDS=5
 readonly MAX_SELECTED_PROVINCES=5
@@ -1585,11 +1586,11 @@ publish_result() {
 
   if has_verified_nodequality && [[ -s "$NODEQUALITY_SNAPSHOT_FILE" ]]; then
     snapshot_size=$(wc -c < "$NODEQUALITY_SNAPSHOT_FILE")
-    if ((snapshot_size <= 98304)); then
+    if ((snapshot_size <= MAX_NODEQUALITY_SNAPSHOT_BYTES)); then
       use_snapshot=1
       success "已生成安全的 NodeQuality 展示快照"
     else
-      warn "NodeQuality 展示快照超过大小限制，将只保留原报告链接"
+      warn "NodeQuality 展示快照超过 256 KiB 上限，联合报告将只提供原始 NQ 报告链接"
     fi
   fi
 

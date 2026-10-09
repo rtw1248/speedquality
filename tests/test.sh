@@ -706,7 +706,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.1.1" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.1.2" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -946,9 +946,36 @@ test_broad_mask_is_rejected() {
 test_nodequality_snapshot_is_sanitized_and_allowlisted() {
   local output="$TEST_DIR/nq-snapshot.out"
   local snapshot="$TEST_DIR/nq-snapshot.json"
+  local large_record="$TEST_DIR/nq-large-record.json"
   local mock_bin="$TEST_DIR/mock-curl-bin"
   mkdir -p "$mock_bin"
   ln -s "$MOCK_CURL" "$mock_bin/curl"
+
+  python3 - "$MATCH_RECORD" "$large_record" <<'PY'
+import base64
+import io
+import json
+import sys
+import zipfile
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    record = json.load(handle)
+archive = io.BytesIO()
+padding = "\x1b[32m100Mbps\x1b[0m\n" * 2500
+with zipfile.ZipFile(io.BytesIO(base64.b64decode(record["data"]["result"]))) as source:
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as target:
+        for member in source.infolist():
+            content = source.read(member)
+            if member.filename == "nodequality.md":
+                markdown = content.decode("gb18030")
+                markdown = markdown.replace("  保留  对齐空格", "  保留  对齐空格\n" + padding + "BASIC-END")
+                markdown = markdown.replace("IP质量体检报告", padding + "IP-END\nIP质量体检报告")
+                content = markdown.encode("gb18030")
+            target.writestr(member, content)
+record["data"]["result"] = base64.b64encode(archive.getvalue()).decode("ascii")
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump(record, handle)
+PY
 
   env PATH="$mock_bin:$PATH" \
     MOCK_CURL_REPORT_URL="$REPORT_PAGE" \
@@ -960,7 +987,7 @@ test_nodequality_snapshot_is_sanitized_and_allowlisted() {
     SPEEDQUALITY_LEASE_DIR="$LEASE_DIR" SPEEDQUALITY_HAS_IPV4=1 \
     SPEEDQUALITY_HAS_IPV6=0 \
     SPEEDQUALITY_NODEQUALITY_IPINFO_FILE="$CURRENT_INFO" \
-    SPEEDQUALITY_NODEQUALITY_RECORD_FILE="$MATCH_RECORD" \
+    SPEEDQUALITY_NODEQUALITY_RECORD_FILE="$large_record" \
     bash "$RUNNER" -p hb --nq "$REPORT_URL" >"$output" 2>&1
 
   assert_contains "$output" '已生成安全的 NodeQuality 展示快照'
@@ -968,10 +995,13 @@ test_nodequality_snapshot_is_sanitized_and_allowlisted() {
   if ! python3 - "$snapshot" <<'PY'
 import json
 import sys
+from pathlib import Path
 
+assert 96 * 1024 < Path(sys.argv[1]).stat().st_size <= 256 * 1024
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     snapshot = json.load(handle)
 assert snapshot["version"] == 2
+assert not snapshot["truncated"]
 pages = snapshot["pages"]
 assert [page["id"] for page in pages] == [
     "basic", "ip-quality", "network-quality", "return-route",
@@ -987,13 +1017,15 @@ assert "\x1b[31m红色标题\x1b[0m" in content
 assert "\x1b]" not in content
 assert "\x01" not in content
 assert "<script>alert('snapshot')</script>" in content
+assert "BASIC-END" in pages[0]["content"]
+assert "IP-END" in pages[1]["content"]
 assert pages[2]["image_url"] == "https://images.example/network.webp"
 assert pages[3]["image_url"] == "https://images.example/route.png"
 PY
   then
     fail 'NodeQuality 原始分页快照或安全清洗不符合预期'
   fi
-  pass 'NodeQuality 分页顺序、ANSI、空白和图片被保留且危险控制符已清除'
+  pass '超过 96 KiB 的 NodeQuality 快照完整上传，保留分页和颜色并清除危险控制符'
 }
 
 test_nodequality_archive_member_limit() {
@@ -1039,7 +1071,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.1.1|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.1.2|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -1053,8 +1085,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.1.1'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.1.1'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.1.2'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.1.2'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
