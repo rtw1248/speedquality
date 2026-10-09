@@ -179,7 +179,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.6").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.7").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -1967,9 +1967,9 @@ function renderStructuredSpeedText(value, options = {}) {
         : null;
       const headings = [
         ansiText(padDisplay(family, 8, "right"), "1;96", colored),
-        ansiText(padDisplay("延迟", 10, "right"), "1;37", colored),
-        ansiText(padDisplay("单线程上传", 18, "right"), "1;37", colored),
-        ansiText(padDisplay("单线程下载", 18, "right"), "1;37", colored),
+        ansiText(padDisplay("延迟", 10, "right"), "1;96", colored),
+        ansiText(padDisplay("单线程上传", 18, "right"), "1;96", colored),
+        ansiText(padDisplay("单线程下载", 18, "right"), "1;96", colored),
       ];
       lines.push(headings.join("  "));
       for (const result of rows) {
@@ -2070,7 +2070,6 @@ function markdownImage(page, prefix = "NodeQuality") {
 function speedReportHeaderText(report, options = {}) {
   const colored = options.colored === true;
   const targetMbps = Number(report.target_mbps);
-  const durationSeconds = Number(report.duration_seconds);
   const maskedIP = stripUnsafeTerminalText(report.source_ip_masked || "") || "IP 段未知";
   const reportVersion = boundedText(report.version, 32);
   const projectUrl = normalizeHttpsUrl(options.projectUrl, 2048);
@@ -2090,7 +2089,9 @@ function speedReportHeaderText(report, options = {}) {
     { text: "SpeedQuality 测速报告：", code: "1;37" },
     { text: maskedIP, code: "1;96" },
   ]));
-  if (projectUrl) lines.push(ansiText(centerDisplay(projectUrl), "4;36", colored));
+  if (projectUrl) lines.push(centeredStyled([
+    { text: projectUrl, code: "4;36" },
+  ]));
   if (runUrl) lines.push(ansiText(centerDisplay(`bash <(curl -fsSL ${runUrl})`), "36", colored));
   const reportDetails = [
     `报告时间：${formatTime(report.tested_at)}`,
@@ -2100,7 +2101,6 @@ function speedReportHeaderText(report, options = {}) {
   const configuration = [
     "单线程",
     TARGET_SPEEDS.has(targetMbps) ? `${targetMbps} Mbps 档位` : "",
-    durationSeconds === 5 ? `每方向 ${durationSeconds} 秒` : "",
   ].filter(Boolean).join(" / ");
   lines.push(ansiText(centerDisplay(`测速配置：${configuration}`), "37", colored));
   lines.push(ansiText("#".repeat(80), "36", colored));
@@ -2495,6 +2495,7 @@ export function renderReport(report, options = {}) {
     .combined-wordmark { display:flex; align-items:center; justify-content:center; }
     .combined-wordmark .brand-wordmark { padding-left:11px; font-size:42px; }
     .combined-wordmark .sq-wordmark { padding-left:0; border-left:0; }
+    .sq-header .sq-wordmark { padding-left:0; border-left:0; }
     .wordmark-plus { margin:0 11px; color:#fff; font:300 34px/1 Arial,sans-serif; }
     .nq-terminal-scroll,.sq-terminal-scroll { overflow:auto; scrollbar-color:#efefef #797979; scrollbar-width:thin; }
     .linked-report .nq-terminal-scroll { min-height:500px; max-height:min(760px,calc(100vh - 205px)); }

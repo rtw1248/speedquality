@@ -70,6 +70,7 @@ if ((BUILD_ONLY == 1)); then
 fi
 
 printf '\n[i] 正在启动本地预览\n'
+printf '    全部状态索引: http://%s:%s/index.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
 printf '    全部:         http://%s:%s/report.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
 printf '    基本信息:     http://%s:%s/report-basic.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
 printf '    IP 质量:      http://%s:%s/report-ip-quality.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
@@ -79,6 +80,17 @@ printf '    联合报告 SQ:  http://%s:%s/report-speed.html\n' "$PREVIEW_HOST" 
 printf '    时间过旧示例: http://%s:%s/report-stale-speed.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
 printf '    时间未知示例: http://%s:%s/report-time-unknown-speed.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
 printf '    独立 SQ:      http://%s:%s/report-standalone.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '\n    测速结果状态预览:\n'
+printf '    单省 IPv4:    http://%s:%s/result-success-ipv4.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '    双栈结果:     http://%s:%s/result-dual-stack.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '    节点不存在:   http://%s:%s/result-node-unavailable.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '    传输失败:     http://%s:%s/result-transfer-failed.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '    颜色阈值:     http://%s:%s/result-color-thresholds.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '    100 Mbps:     http://%s:%s/result-speed-100.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '    400 Mbps:     http://%s:%s/result-speed-400.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '    无流量统计:   http://%s:%s/result-no-traffic.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '    NQ 快照缺失:  http://%s:%s/report-nq-snapshot-unavailable.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
+printf '    NQ 内容截断:  http://%s:%s/report-nq-page-truncated.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
 printf '\n    NQ 校验结果预览:\n'
 printf '    完整 IP 一致: http://%s:%s/validation-full-ip-ok.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"
 printf '    脱敏网段一致: http://%s:%s/validation-masked-ip-ok.html\n' "$PREVIEW_HOST" "$PREVIEW_PORT"

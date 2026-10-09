@@ -70,7 +70,7 @@ func main() {
 		terminalProgressEnabled(),
 	)
 	report := runLease(ctx, lease, progress)
-	progress.Finish("测速完成")
+	progress.Finish()
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[X] 无法生成结果: %v\n", err)
@@ -123,9 +123,9 @@ func printReport(writer io.Writer, report Report) {
 	)
 	writeColumns(writer, []tableColumn{
 		{family, 12, "right", cyan},
-		{"延迟", 10, "right", yellow},
-		{"单线程上传", 18, "right", yellow},
-		{"单线程下载", 18, "right", yellow},
+		{"延迟", 10, "right", cyan},
+		{"单线程上传", 18, "right", cyan},
+		{"单线程下载", 18, "right", cyan},
 	}, reset)
 	for _, result := range report.Results {
 		if result.Status != "ok" {

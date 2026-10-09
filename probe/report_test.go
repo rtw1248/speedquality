@@ -31,6 +31,16 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 		}
 	}
 	plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(text, "")
+	heading := ""
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "IPv4") && strings.Contains(line, "单线程下载") {
+			heading = line
+			break
+		}
+	}
+	if strings.Count(heading, cyan) != 4 || strings.Contains(heading, yellow) {
+		t.Fatalf("report headings do not share the IPv4 color: %q", heading)
+	}
 	for _, expected := range []string{
 		"SpeedQuality 单线程测速  湖北  200 Mbps 档位",
 		"        IPv4        延迟          单线程上传          单线程下载",

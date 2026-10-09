@@ -13,37 +13,30 @@ function sampleReport(origin, bindStatus, options = {}) {
   const stale = bindStatus === "verified_stale";
   const timeUnknown = bindStatus === "verified_time_unknown";
   const timeGapSeconds = linked && !timeUnknown ? (stale ? 4200 : 300) : null;
+  const targetMbps = Number(options.targetMbps || 200);
+  const speedReports = sampleSpeedReports(now, { ...options, targetMbps });
+  const regionNames = [...new Set(speedReports.map((report) => report.region.name))];
+  const families = [...new Set(speedReports.map((report) => report.family))];
   return {
     id: options.id || "AbCdEfGhIjKl",
     created_at: now,
     expires_at: now + 90 * 86400,
     tested_at: testedAt,
-    regions: "湖北、北京",
+    regions: regionNames.join("、"),
     mode: "s",
-    ip_mode: "v4",
+    ip_mode: families.length > 1 ? "v6" : families[0] || "v4",
     source_ip_masked: "203.0.*.*",
-    target_mbps: 200,
+    target_mbps: targetMbps,
     speed_url: "",
-    speed_text: [
-      "SpeedQuality  湖北 / IPv4  限速档位 200 Mbps",
-      "        IPv4        延迟      单线程上传      单线程下载",
-      "    湖北电信      9.90ms        20.00Mbps       200Mbps ✓",
-      "    湖北联通     14.20ms        18.40Mbps       186.50Mbps",
-      "    湖北移动     18.70ms        15.80Mbps       172.30Mbps",
-      "",
-      "SpeedQuality  北京 / IPv4  限速档位 200 Mbps",
-      "        IPv4        延迟      单线程上传      单线程下载",
-      "    北京电信     42.10ms       193.90Mbps       200Mbps ✓",
-      "    北京联通     38.30ms         1.92Mbps       200Mbps ✓",
-      "    北京移动     51.60ms       195.30Mbps       200Mbps ✓",
-    ].join("\n"),
-    speed_data: JSON.stringify([
-      sampleSpeedReport("hb", "湖北", "v4", now),
-      sampleSpeedReport("bj", "北京", "v4", now),
-    ]),
+    speed_text: "SpeedQuality preview",
+    speed_data: JSON.stringify(speedReports),
     duration_seconds: 5,
-    traffic_rx_bytes: 1830000000,
-    traffic_tx_bytes: 620000000,
+    traffic_rx_bytes: Object.hasOwn(options, "trafficRxBytes")
+      ? options.trafficRxBytes
+      : 1830000000,
+    traffic_tx_bytes: Object.hasOwn(options, "trafficTxBytes")
+      ? options.trafficTxBytes
+      : 620000000,
     nq_url: linked
       ? "https://nodequality.com/r/Q9jkabAvIcQMO49iTVJ72hYjMqwN3Veo"
       : "",
@@ -52,15 +45,16 @@ function sampleReport(origin, bindStatus, options = {}) {
     time_gap_seconds: timeGapSeconds,
     nq_identity_reason: linked ? options.identityReason || "masked_ip_and_asn" : "",
     bind_status: bindStatus,
-    version: "1.0.0",
+    version: "1.0.7",
   };
 }
 
-function sampleSpeedReport(code, name, family, now) {
-  const values = [
-    ["ct", "电信", 9.9, 200, 20],
-    ["cu", "联通", 14.2, 186.5, 18.4],
-    ["cm", "移动", 18.7, 172.3, 15.8],
+function sampleSpeedReport(code, name, family, now, options = {}) {
+  const targetMbps = Number(options.targetMbps || 200);
+  const values = options.values || [
+    ["ct", "电信", 9.9, targetMbps, targetMbps * 0.1],
+    ["cu", "联通", 14.2, targetMbps * 0.9325, targetMbps * 0.092],
+    ["cm", "移动", 18.7, targetMbps * 0.8615, targetMbps * 0.079],
   ];
   return {
     version: 1,
@@ -70,7 +64,7 @@ function sampleSpeedReport(code, name, family, now) {
     region: { code, name },
     family,
     duration_seconds: 5,
-    target_mbps: 200,
+    target_mbps: targetMbps,
     modes: ["s"],
     results: values.map(([carrier, carrierName, latency, singleDown, singleUp], index) => ({
       carrier,
@@ -82,6 +76,70 @@ function sampleSpeedReport(code, name, family, now) {
       single: { download_mbps: singleDown, upload_mbps: singleUp, download_bytes: 100000000, upload_bytes: 10000000 },
     })),
   };
+}
+
+function sampleSpeedReports(now, options = {}) {
+  const targetMbps = Number(options.targetMbps || 200);
+  const report = (code, name, family, extra = {}) =>
+    sampleSpeedReport(code, name, family, now, { targetMbps, ...extra });
+  switch (options.profile) {
+    case "single":
+      return [report("hb", "湖北", "v4")];
+    case "dual-stack":
+      return [
+        report("hb", "湖北", "v4"),
+        report("hb", "湖北", "v6", {
+          values: [
+            ["ct", "电信", 109.2, 1.54, 1.31],
+            ["cu", "联通", 198.1, 104.88, 113.7],
+            ["cm", "移动", 91.56, targetMbps, targetMbps],
+          ],
+        }),
+      ];
+    case "node-unavailable": {
+      const unavailable = report("hb", "湖北", "v4");
+      for (const index of [1, 2]) {
+        unavailable.results[index] = {
+          ...unavailable.results[index],
+          latency_ms: null,
+          status: "failed",
+          error: "没有可连接的候选节点",
+          single: null,
+        };
+      }
+      return [unavailable];
+    }
+    case "transfer-failed": {
+      const failed = report("sh", "上海", "v4");
+      failed.results[1] = {
+        ...failed.results[1],
+        latency_ms: null,
+        status: "failed",
+        error: "测速连接未产生有效数据",
+        single: null,
+      };
+      return [failed];
+    }
+    case "thresholds":
+      return [report("sh", "上海", "v4", {
+        values: [
+          ["ct", "电信", 80, targetMbps, targetMbps * 0.9],
+          ["cu", "联通", 150, targetMbps * 0.5, targetMbps * 0.79],
+          ["cm", "移动", 250, targetMbps * 0.2, targetMbps * 0.29],
+        ],
+      })];
+    default:
+      return [
+        report("hb", "湖北", "v4"),
+        report("bj", "北京", "v4", {
+          values: [
+            ["ct", "电信", 42.1, targetMbps, targetMbps * 0.9695],
+            ["cu", "联通", 38.3, targetMbps, targetMbps * 0.0096],
+            ["cm", "移动", 51.6, targetMbps, targetMbps * 0.9765],
+          ],
+        }),
+      ];
+  }
 }
 
 function sampleSnapshot() {
@@ -306,6 +364,37 @@ if (process.argv.includes("--build")) {
     "report-time-unknown-speed.html": { status: "verified_time_unknown", tab: "sq" },
     "report-standalone.html": { status: "standalone", tab: "sq" },
     "report-standalone-speed.html": { status: "standalone", tab: "speed" },
+    "result-success-ipv4.html": {
+      status: "standalone", tab: "sq", profile: "single", id: "SuccessIPv4A",
+    },
+    "result-dual-stack.html": {
+      status: "standalone", tab: "sq", profile: "dual-stack", id: "DualStack123",
+    },
+    "result-node-unavailable.html": {
+      status: "standalone", tab: "sq", profile: "node-unavailable", id: "NoNodeDemo12",
+    },
+    "result-transfer-failed.html": {
+      status: "standalone", tab: "sq", profile: "transfer-failed", id: "FailedDemo12",
+    },
+    "result-color-thresholds.html": {
+      status: "standalone", tab: "sq", profile: "thresholds", id: "ColorsDemo12",
+    },
+    "result-speed-100.html": {
+      status: "standalone", tab: "sq", profile: "single", targetMbps: 100, id: "Speed100Demo",
+    },
+    "result-speed-400.html": {
+      status: "standalone", tab: "sq", profile: "single", targetMbps: 400, id: "Speed400Demo",
+    },
+    "result-no-traffic.html": {
+      status: "standalone", tab: "sq", profile: "single", trafficRxBytes: null,
+      trafficTxBytes: null, id: "NoTraffic123",
+    },
+    "report-nq-snapshot-unavailable.html": {
+      status: "verified", tab: "nodequality", snapshotMode: "none", id: "NoSnapshot12",
+    },
+    "report-nq-page-truncated.html": {
+      status: "verified", tab: "nq-basic", snapshotMode: "truncated", id: "Truncated123",
+    },
     "validation-full-ip-ok.html": {
       status: "verified", tab: "sq", identityReason: "full_ip", id: "FullIPDemo12",
     },
@@ -348,18 +437,26 @@ if (process.argv.includes("--build")) {
     ...linkedTabs,
     sq: "./report-time-unknown-speed.html",
   };
+  const snapshotFor = (config) => {
+    if (!["verified", "verified_stale", "verified_time_unknown"].includes(config.status) ||
+        config.snapshotMode === "none") return null;
+    if (config.snapshotMode !== "truncated") return previewSnapshot;
+    const snapshot = JSON.parse(JSON.stringify(previewSnapshot));
+    const page = snapshot.pages.find((entry) => entry.id === "basic");
+    if (page) page.truncated = true;
+    snapshot.truncated = true;
+    return snapshot;
+  };
   await Promise.all(Object.entries(outputs).map(([filename, config]) =>
     writeFile(
       new URL(`./preview/${filename}`, import.meta.url),
       renderReport(sampleReport(".", config.status, config), {
         tab: config.tab,
         reportUrl: `https://sq.example.com/r/${config.id || "AbCdEfGhIjKl"}`,
-        snapshot: ["verified", "verified_stale", "verified_time_unknown"].includes(config.status)
-          ? previewSnapshot
-          : null,
+        snapshot: snapshotFor(config),
         promotion: {
           text: "SpeedQuality 社区节点计划",
-          projectUrl: "https://github.com/example/speedquality",
+          projectUrl: "https://github.com/rtw1248/speedquality",
         },
         usage: { today: 128, total: 12680 },
         tabLinks: {
@@ -372,11 +469,75 @@ if (process.argv.includes("--build")) {
               ["verified", "verified_stale", "verified_time_unknown"].includes(config.status)
             ? { sq: `./${filename}` }
             : {}),
+          ...(config.snapshotMode === "none"
+            ? {
+                nodequality: "./report-nq-snapshot-unavailable.html",
+                sq: "./report-speed.html",
+              }
+            : {}),
+          ...(config.snapshotMode === "truncated"
+            ? { "nq-basic": "./report-nq-page-truncated.html" }
+            : {}),
         },
       }),
       "utf8",
     )
   ));
+  const catalog = [
+    {
+      title: "测速结果状态",
+      items: [
+        ["result-success-ipv4.html", "单省 IPv4 全部成功"],
+        ["result-dual-stack.html", "单省 IPv4 + IPv6 双栈"],
+        ["report-standalone.html", "多省独立报告"],
+        ["result-node-unavailable.html", "部分运营商没有候选节点"],
+        ["result-transfer-failed.html", "节点存在但测速传输失败"],
+        ["result-color-thresholds.html", "延迟与速度的绿、橙、红阈值"],
+        ["result-speed-100.html", "100 Mbps 档位"],
+        ["result-speed-400.html", "400 Mbps 档位"],
+        ["result-no-traffic.html", "无法取得流量计数时的报告"],
+      ],
+    },
+    {
+      title: "NodeQuality 联合报告分页",
+      items: [
+        ["report.html", "全部"],
+        ["report-basic.html", "基本信息"],
+        ["report-ip-quality.html", "IP 质量"],
+        ["report-network-quality.html", "网络质量"],
+        ["report-route.html", "回程路由"],
+        ["report-speed.html", "速度质量"],
+        ["report-nq-snapshot-unavailable.html", "NQ 快照无法读取"],
+        ["report-nq-page-truncated.html", "NQ 页面因安全大小限制被截断"],
+      ],
+    },
+    {
+      title: "NodeQuality 校验结果",
+      items: [
+        ["validation-full-ip-ok.html", "完整 IP 一致，时间正常"],
+        ["validation-masked-ip-ok.html", "脱敏 IP 网段与 ASN 一致，时间正常"],
+        ["validation-time-stale.html", "服务器一致，时间超过 60 分钟"],
+        ["validation-time-unknown.html", "服务器一致，时间无法确认"],
+        ["validation-identity-mismatch.html", "服务器身份不匹配，拒绝绑定"],
+        ["validation-report-unavailable.html", "NQ 报告无法读取或解析"],
+      ],
+    },
+  ];
+  const catalogHtml = catalog.map((group) => `
+    <section>
+      <h2>${group.title}</h2>
+      <ul>${group.items.map(([href, label]) =>
+        `<li><a href="./${href}">${label}</a><code>${href}</code></li>`).join("")}</ul>
+    </section>`).join("");
+  await writeFile(new URL("./preview/index.html", import.meta.url), `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpeedQuality 报告状态预览</title>
+<style>
+  :root{color-scheme:dark}*{box-sizing:border-box}body{max-width:960px;margin:0 auto;padding:32px 20px 56px;background:#050508;color:#f6f5fb;font:15px/1.6 system-ui,sans-serif;letter-spacing:0}h1{margin:0 0 6px;font-size:28px}p{margin:0 0 28px;color:#9aa7a7}section{padding:18px 0;border-top:1px solid #ffffff24}h2{margin:0 0 10px;font-size:18px}ul{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px 18px;margin:0;padding:0;list-style:none}li{display:flex;min-width:0;flex-direction:column;padding:9px 11px;background:#ffffff0d}a{color:#37ff8b;text-underline-offset:3px}code{overflow:hidden;color:#8f98a4;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+</style></head><body><h1>SpeedQuality 报告状态预览</h1>
+<p>这些页面使用同一份生产报告模板，只替换了示例测试结果和校验状态。</p>
+${catalogHtml}</body></html>`, "utf8");
   console.log("Static previews written to deploy/cloudflare-worker/preview/");
 } else {
   server.listen(port, host, () => {

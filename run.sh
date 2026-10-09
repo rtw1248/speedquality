@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.0.6"
-readonly FALLBACK_PROBE_VERSION="v1.0.6"
+readonly SPEEDQUALITY_VERSION="1.0.7"
+readonly FALLBACK_PROBE_VERSION="v1.0.7"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NODEQUALITY_API="https://api.nodequality.com/api/v1"
@@ -39,7 +39,6 @@ NODE_ROUTE_MAX_MBPS=0
 NODE_ROUTE_HAS_V4=0
 NODE_ROUTE_HAS_V6=0
 SPEED_DATA_FILE=""
-DISPLAY_URL=""
 RESULT_PAGE_URL=""
 BIND_STATUS="standalone"
 TEMP_DIR=""
@@ -67,6 +66,7 @@ TRAFFIC_RX_BYTES=""
 TRAFFIC_TX_BYTES=""
 TRAFFIC_TOTAL_BYTES=""
 TRAFFIC_INTERFACES=""
+TRAFFIC_ESTIMATE=""
 LEASE_ERROR_CODE=""
 LEASE_ERROR_MESSAGE=""
 LEASE_ERROR_RETRYABLE=1
@@ -137,7 +137,7 @@ SpeedQuality 选项:
       --version           显示脚本和探针版本
 
 地区代码:
-  bsg SSH 来源省份 + 北京、上海、广东；示例：hb 湖北、bj 北京、gd 广东
+  bsg SSH 来源省份（可识别时）+ 北京、上海、广东；否则只测北上广
   多个省份可使用中英文逗号或顿号分隔；单次最多 5 个，完整列表使用 --list-provinces 查看。
 
 示例:
@@ -219,7 +219,7 @@ list_provinces() {
   hi 海南    cq 重庆    sc 四川    gz 贵州    yn 云南
   xz 西藏    sn 陕西    gs 甘肃    qh 青海    nx 宁夏
   xj 新疆    tw 台湾    hk 香港    mo 澳门
-  bsg SSH 来源省份 + 北京、上海、广东（自动去重）
+  bsg SSH 来源省份（可识别时）+ 北京、上海、广东（自动去重）
 
   易混代码均保持唯一：河北 he / 湖北 hb，河南 ha / 湖南 hn，山西 sx / 陕西 sn。
   单次最多选择 5 个省级地区；全国 all 测试已关闭。
@@ -275,8 +275,11 @@ normalize_regions() {
   IFS=',' read -r -a tokens <<< "$text"
 
   if ((${#tokens[@]} == 1)) && [[ "${tokens[0],,}" =~ ^(bsg|北上广)$ ]]; then
-    [[ -n "$AUTO_REGION_CODE" ]] || die "bsg 需要先识别 SSH 来源省份；请改用 -p 明确列出地区，例如 -p hb,bj,sh,gd"
-    tokens=("$AUTO_REGION_CODE" bj sh gd)
+    if [[ -n "$AUTO_REGION_CODE" ]]; then
+      tokens=("$AUTO_REGION_CODE" bj sh gd)
+    else
+      tokens=(bj sh gd)
+    fi
   else
     for token in "${tokens[@]}"; do
       case "${token,,}" in
@@ -320,7 +323,7 @@ format_bytes() {
 }
 
 show_traffic_preflight() {
-  local region_count family_count phase_seconds operator_points point_description
+  local region_count family_count phase_seconds operator_points
   local bytes_per_second estimated_bytes answer
 
   region_count=$(LC_ALL=C awk -F',' '{print NF}' <<< "$SELECTED_POINTS")
@@ -328,17 +331,14 @@ show_traffic_preflight() {
   phase_seconds=$((SPEED_DURATION_SECONDS + 2))
   if [[ -n "$NODE_ROUTE_KEY" ]]; then
     operator_points=1
-    point_description="1 个指定节点"
   else
     operator_points=$((region_count * 3))
-    point_description="${operator_points} 个运营商测速点"
   fi
   bytes_per_second=$((SPEED_TARGET_MBPS * 1000000 / 8))
   estimated_bytes=$((bytes_per_second * 2 * phase_seconds * operator_points * family_count))
+  TRAFFIC_ESTIMATE=$(format_bytes "$estimated_bytes")
 
-  info "流量估算: ${region_count} 个省级地区 / ${point_description}，${family_count} 种 IP 类型，每方向 ${SPEED_DURATION_SECONDS} 秒 + 约 2 秒预热"
-  warn "按上传、下载各 ${SPEED_TARGET_MBPS} Mbps 上限估算约 $(format_bytes "$estimated_bytes")"
-  info "这是最大参考值；线路未达到目标速率时，实际消耗会更低"
+  info "测速省份: $SELECTED_POINTS；单线程；速度档位: ${SPEED_TARGET_MBPS} Mbps；IP: ${RUN_FAMILIES// / + }；预计最多约 $TRAFFIC_ESTIMATE"
 
   if ((estimated_bytes >= 10000000000)); then
     alert "当前方案可能消耗大量流量。可通过减少省份、降低 -s/--speed 或用 -v4/-v6 只测一种 IP 类型来降低消耗"
@@ -406,14 +406,16 @@ json_string_field() {
 detect_auto_region() {
   local response_file="$TEMP_DIR/ssh-geo.json"
   local region_code country_code mapped
+  local quiet="${1:-}"
 
   SSH_CLIENT_IP=$(extract_ssh_client_ip || true)
   if [[ -z "$SSH_CLIENT_IP" ]]; then
-    warn "没有检测到 SSH 客户端 IP；请手动选择地区"
+    [[ "$quiet" == "quiet" ]] || warn "没有检测到 SSH 客户端 IP；请手动选择地区"
     return 1
   fi
   if private_ip_literal "$SSH_CLIENT_IP"; then
-    warn "SSH 来源 $SSH_CLIENT_IP 是内网地址，无法自动定位；请手动选择地区"
+    [[ "$quiet" == "quiet" ]] || \
+      warn "SSH 来源 $SSH_CLIENT_IP 是内网地址，无法自动定位；请手动选择地区"
     return 1
   fi
 
@@ -425,7 +427,7 @@ detect_auto_region() {
     validate_https_url "$GEO_API" || die "地区检测 API 地址不合法"
     if ! curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --connect-timeout 5 --max-time 15 \
       "${GEO_API%/}/$SSH_CLIENT_IP" -o "$response_file"; then
-      warn "无法查询 SSH 来源 $SSH_CLIENT_IP 的地区；请手动选择"
+      [[ "$quiet" == "quiet" ]] || warn "无法查询 SSH 来源 $SSH_CLIENT_IP 的地区；请手动选择"
       return 1
     fi
   fi
@@ -438,13 +440,15 @@ detect_auto_region() {
     cn) ;;
     hk|mo|tw) region_code="$country_code" ;;
     *)
-      warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内；请手动选择"
+      [[ "$quiet" == "quiet" ]] || \
+        warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内；请手动选择"
       return 1
       ;;
   esac
   mapped=$(region_code_from_token "$region_code" || true)
   if [[ -z "$mapped" ]]; then
-    warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内；请手动选择"
+    [[ "$quiet" == "quiet" ]] || \
+      warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内；请手动选择"
     return 1
   fi
   AUTO_REGION_CODE="$mapped"
@@ -467,7 +471,7 @@ interactive_region_selection() {
     printf '  测速地区 [默认 %s (%s)，可填 bsg 或 hb,bj，最多 5 个]: ' \
       "$default_name" "$default_region"
   else
-    printf '  测速地区 [无默认值，可填 hb 或 hb,bj，最多 5 个]: '
+    printf '  测速地区 [无默认值，可填 bsg、hb 或 hb,bj，最多 5 个]: '
   fi
   IFS= read -r answer || answer=""
   REGION_INPUT="${answer:-$default_region}"
@@ -539,7 +543,11 @@ prepare_speed_selection() {
     fi
 
     if [[ -z "$REGION_INPUT" || "$should_interact" -eq 1 || "$bsg_requested" -eq 1 ]]; then
-      detect_auto_region || true
+      if ((bsg_requested == 1)); then
+        detect_auto_region quiet || true
+      else
+        detect_auto_region || true
+      fi
     fi
     if ((should_interact == 1)); then
       interactive_selection
@@ -550,9 +558,11 @@ prepare_speed_selection() {
       [[ -n "$REGION_INPUT" ]] || die "无法自动确定 SSH 来源地区，请使用 -p/--province 指定"
       info "SSH 来源 $SSH_CLIENT_IP，自动选择 $AUTO_REGION_NAME ($AUTO_REGION_CODE)"
     elif ((bsg_requested == 1)); then
-      [[ -n "$AUTO_REGION_CODE" ]] || \
-        die "无法识别 SSH 来源省份，不能使用 bsg；请用 -p 明确列出最多 5 个省份"
-      info "SSH 来源 $SSH_CLIENT_IP，bsg 将选择 $AUTO_REGION_NAME、北京、上海和广东并自动去重"
+      if [[ -n "$AUTO_REGION_CODE" ]]; then
+        info "SSH 来源 $SSH_CLIENT_IP，bsg 将选择 $AUTO_REGION_NAME、北京、上海和广东并自动去重"
+      else
+        warn "SSH 来源 ${SSH_CLIENT_IP:-未知} 无法映射到中国省份；bsg 将只选择北京、上海和广东"
+      fi
     fi
 
     normalize_regions "$REGION_INPUT"
@@ -561,7 +571,6 @@ prepare_speed_selection() {
   if [[ -n "$NODE_ROUTE_KEY" ]]; then
     info "指定 SQ 节点: $NODE_ROUTE_CARRIER / $NODE_ROUTE_ACCESS_MODE；最高 ${NODE_ROUTE_MAX_MBPS} Mbps"
   fi
-  info "测速省份: $SELECTED_POINTS；单线程；速度档位: ${SPEED_TARGET_MBPS} Mbps；IP: ${RUN_FAMILIES// / + }"
   show_traffic_preflight
 }
 
@@ -669,11 +678,6 @@ select_run_families() {
         fi
         die "当前服务器与指定节点没有共同可用的 IP 类型"
       fi
-      case "$RUN_FAMILIES" in
-        "v4 v6") info "检测到 IPv4 和 IPv6 连通性，默认测试两者" ;;
-        v4) info "本次仅有可用的 IPv4，默认只测试 IPv4" ;;
-        v6) info "本次仅有可用的 IPv6，默认只测试 IPv6" ;;
-      esac
       ;;
     v4)
       ((server_has_v4 == 1)) \
@@ -682,7 +686,6 @@ select_run_families() {
         die "指定节点没有登记 IPv4，不能使用 -v4"
       fi
       RUN_FAMILIES="v4"
-      info "已指定仅测试 IPv4"
       ;;
     v6)
       ((server_has_v6 == 1)) \
@@ -691,7 +694,6 @@ select_run_families() {
         die "指定节点没有登记 IPv6，不能使用 -v6"
       fi
       RUN_FAMILIES="v6"
-      info "已指定仅测试 IPv6"
       ;;
   esac
 
@@ -1181,7 +1183,6 @@ resolve_probe_binary() {
 
   mkdir -p -- "$(dirname -- "$cached")"
   staged="$TEMP_DIR/$asset"
-  info "下载 SpeedQuality 探测器 ${PROBE_VERSION} (${arch})"
   download_file "${PROBE_BASE%/}/${asset}" "$staged" \
     || die "测速程序下载失败"
   actual=$(sha256_file "$staged")
@@ -1262,7 +1263,7 @@ read_network_counters() {
 }
 
 finish_traffic_measurement() {
-  local before="$1" after before_rx before_tx after_rx after_tx interface_display
+  local before="$1" after before_rx before_tx after_rx after_tx
   [[ -n "$before" ]] || {
     warn "无法读取默认出口网卡计数器，本次不显示实际流量"
     return 0
@@ -1281,9 +1282,7 @@ finish_traffic_measurement() {
   TRAFFIC_RX_BYTES=$((after_rx - before_rx))
   TRAFFIC_TX_BYTES=$((after_tx - before_tx))
   TRAFFIC_TOTAL_BYTES=$((TRAFFIC_RX_BYTES + TRAFFIC_TX_BYTES))
-  interface_display="${TRAFFIC_INTERFACES// /, }"
   success "实际流量: 下载 $(format_bytes "$TRAFFIC_RX_BYTES")，上传 $(format_bytes "$TRAFFIC_TX_BYTES")，合计 $(format_bytes "$TRAFFIC_TOTAL_BYTES")"
-  info "统计接口: $interface_display；数值为本次 SpeedQuality 执行期间网卡差值，可能包含同期其它进程流量"
 }
 
 request_speed_session_token() {
@@ -1550,7 +1549,6 @@ publish_result() {
   local use_snapshot=0
   local -a form auth_args
 
-  DISPLAY_URL=""
   if [[ -z "$REPORT_BASE" || "$REPORT_BASE" == "$REPORT_BASE_PLACEHOLDER" ]]; then
     warn "当前入口未配置分享服务，测速结果只显示在终端"
     return 0
@@ -1657,30 +1655,9 @@ publish_result() {
   response="${response//$'\n'/}"
   if validate_https_url "$response" && [[ "$response" == "${REPORT_BASE%/}/r/"* ]]; then
     RESULT_PAGE_URL="$response"
-    DISPLAY_URL="$response"
-    success "分享报告已生成: $RESULT_PAGE_URL"
+    success "分享报告: $RESULT_PAGE_URL"
   else
     warn "分享服务返回了无效链接，测速结果只显示在终端"
-  fi
-}
-
-print_summary() {
-  printf '\n%s测试完成%s\n' "$C_CYAN" "$C_RESET"
-  if has_verified_nodequality; then
-    printf '展示类型: SpeedQuality + NodeQuality 关联报告\n'
-  else
-    printf '展示类型: SpeedQuality 独立结果\n'
-  fi
-  if [[ "$TRAFFIC_TOTAL_BYTES" =~ ^[0-9]+$ ]]; then
-    printf '实际流量: 下载 %s，上传 %s，合计 %s\n' \
-      "$(format_bytes "$TRAFFIC_RX_BYTES")" \
-      "$(format_bytes "$TRAFFIC_TX_BYTES")" \
-      "$(format_bytes "$TRAFFIC_TOTAL_BYTES")"
-  fi
-  if [[ -n "$DISPLAY_URL" ]]; then
-    printf '展示链接: %s\n' "$DISPLAY_URL"
-  else
-    printf '展示链接: 未生成，测速结果已显示在终端\n'
   fi
 }
 
@@ -1709,7 +1686,6 @@ main() {
   fi
 
   publish_result
-  print_summary
 }
 
 main "$@"

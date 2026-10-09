@@ -55,7 +55,7 @@ func (tracker *progressTracker) loop() {
 	for {
 		select {
 		case <-ticker.C:
-			tracker.render(false)
+			tracker.render()
 		case <-tracker.stop:
 			return
 		}
@@ -78,18 +78,16 @@ func (tracker *progressTracker) Update(completed int, label string) {
 	tracker.mu.Unlock()
 }
 
-func (tracker *progressTracker) Finish(label string) {
+func (tracker *progressTracker) Finish() {
 	if !tracker.enabled {
 		return
 	}
-	tracker.Update(tracker.total, label)
 	tracker.stopOnce.Do(func() { close(tracker.stop) })
 	<-tracker.done
-	tracker.render(true)
-	fmt.Fprintln(tracker.writer)
+	fmt.Fprint(tracker.writer, "\r\x1b[2K")
 }
 
-func (tracker *progressTracker) render(final bool) {
+func (tracker *progressTracker) render() {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 	tracker.frame++
@@ -100,12 +98,11 @@ func (tracker *progressTracker) render(final bool) {
 		tracker.label,
 		time.Since(tracker.startedAt),
 		tracker.frame,
-		final,
 	)
 	fmt.Fprintf(tracker.writer, "\r\x1b[2K%s", line)
 }
 
-func formatProgressLine(completed, total int, prefix, label string, elapsed time.Duration, frame int, final bool) string {
+func formatProgressLine(completed, total int, prefix, label string, elapsed time.Duration, frame int) string {
 	if total < 1 {
 		total = 1
 	}
@@ -124,9 +121,6 @@ func formatProgressLine(completed, total int, prefix, label string, elapsed time
 		bar = strings.Repeat("=", progressBarWidth)
 	}
 	status := strings.TrimSpace(strings.Join([]string{prefix, label}, " / "))
-	if final {
-		return fmt.Sprintf("[%s] %3d%% %s  %ds", bar, percent, status, int(elapsed.Seconds()))
-	}
 	spinner := []byte{'|', '/', '-', '\\'}
 	return fmt.Sprintf(
 		"[%s] %3d%% %s  %ds %c",

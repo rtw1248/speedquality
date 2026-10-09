@@ -955,6 +955,9 @@ test("structured results render as terminal text and feed private node health", 
   assert.match(page, /SpeedQuality 测速报告/);
   assert.match(page, /203\.0\.\*\.\*/);
   assert.match(page, /IPv4/);
+  assert.match(page, /<span style="color:#c8faf4;font-weight:700">\s*延迟<\/span>/);
+  assert.match(page, /<span style="color:#c8faf4;font-weight:700">\s*单线程上传<\/span>/);
+  assert.match(page, /<span style="color:#c8faf4;font-weight:700">\s*单线程下载<\/span>/);
   assert.match(page, /<span style="color:#c8faf4;font-weight:700">湖北<\/span>/);
   assert.match(page, /<span style="color:#70a598">\s*电信<\/span>/);
   assert.match(page, /<span style="color:#9eff6e">\s*8\.25ms<\/span>/);
@@ -963,7 +966,8 @@ test("structured results render as terminal text and feed private node health", 
   assert.match(page, /<span style="color:#70a598">下载流量 <\/span><span style="color:#9eff6e">100\.00 MB<\/span> \/ /);
   assert.match(page, /报告时间：/);
   assert.match(page, /200Mbps ✓/);
-  assert.match(page, /测速配置：单线程 \/ 200 Mbps 档位 \/ 每方向 5 秒/);
+  assert.match(page, /测速配置：单线程 \/ 200 Mbps 档位/);
+  assert.doesNotMatch(page, /每方向 5 秒/);
   assert.match(page, /实际流量/);
   assert.doesNotMatch(page, /达标线：|统计口径：/);
   assert.match(page, /150\.50Mbps/);
@@ -1197,7 +1201,8 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.match(page, /50\.00 MB/);
   assert.match(page, /合计/);
   assert.match(page, /150\.00 MB/);
-  assert.match(page, /测速配置：单线程 \/ 200 Mbps 档位 \/ 每方向 5 秒/);
+  assert.match(page, /测速配置：单线程 \/ 200 Mbps 档位/);
+  assert.doesNotMatch(page, /每方向 5 秒/);
   assert.match(page, /实际流量/);
   assert.doesNotMatch(page, /达标线：|统计口径：/);
   assert.match(page, /aria-label="推广"/);
@@ -1226,6 +1231,15 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
     new RegExp(`script-src 'nonce-${nonce}'`),
   );
   assert.match(page, /https:\/\/github\.com\/owner\/speedquality/);
+  assert.match(
+    page,
+    /<span style="color:#70a598;text-decoration:underline">https:\/\/github\.com\/owner\/speedquality<\/span>/,
+  );
+  assert.doesNotMatch(
+    page,
+    /<span style="color:#70a598;text-decoration:underline">\s+https:\/\/github\.com\/owner\/speedquality/,
+  );
+  assert.match(page, /\.sq-header \.sq-wordmark \{ padding-left:0; border-left:0; \}/);
   assert.match(page, /今日速度检测量：<strong>1<\/strong>；总检测量：<strong>1<\/strong>。感谢使用 SpeedQuality！/);
   assert.match(page, /报告链接：<a href="https:\/\/rtw\.example\/r\//);
   assert.doesNotMatch(page, /SQ Node Verification|验证规范/);

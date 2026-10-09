@@ -222,7 +222,8 @@ test_short_province_and_default_speed() {
   assert_line "$args" 'hb v4'
   assert_contains "$output" '单线程；速度档位: 200 Mbps'
   assert_contains "$output" '1.05 GB'
-  assert_contains "$output" "展示链接: $REPORT_PAGE"
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
+  assert_not_contains "$output" '展示链接:'
   pass '-p 是 --province 的短写；仅 IPv4 可用时默认测试 IPv4'
 }
 
@@ -268,21 +269,24 @@ test_ip_family_selection() {
     bash "$RUNNER" -p hb >"$TEST_DIR/auto-dual.out" 2>&1
   assert_line "$args" 'hb v4'
   assert_line "$args" 'hb v6'
-  assert_contains "$TEST_DIR/auto-dual.out" '默认测试两者'
+  assert_contains "$TEST_DIR/auto-dual.out" 'IP: v4 + v6'
+  assert_not_contains "$TEST_DIR/auto-dual.out" '默认测试两者'
 
   args="$TEST_DIR/v4-only-args.txt"
   report_env SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=1 MOCK_ARGS_FILE="$args" \
     bash "$RUNNER" -p hb -v4 >"$TEST_DIR/v4-only.out" 2>&1
   assert_line "$args" 'hb v4'
   assert_not_contains "$args" 'hb v6'
-  assert_contains "$TEST_DIR/v4-only.out" '已指定仅测试 IPv4'
+  assert_contains "$TEST_DIR/v4-only.out" 'IP: v4'
+  assert_not_contains "$TEST_DIR/v4-only.out" '已指定仅测试 IPv4'
 
   args="$TEST_DIR/v6-only-args.txt"
   report_env SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=1 MOCK_ARGS_FILE="$args" \
     bash "$RUNNER" -p hb --ipv6 >"$TEST_DIR/v6-only.out" 2>&1
   assert_not_contains "$args" 'hb v4'
   assert_line "$args" 'hb v6'
-  assert_contains "$TEST_DIR/v6-only.out" '已指定仅测试 IPv6'
+  assert_contains "$TEST_DIR/v6-only.out" 'IP: v6'
+  assert_not_contains "$TEST_DIR/v6-only.out" '已指定仅测试 IPv6'
 
   if report_env SPEEDQUALITY_HAS_IPV4=0 SPEEDQUALITY_HAS_IPV6=1 \
     bash "$RUNNER" -p hb -v4 >"$TEST_DIR/v4-unavailable.out" 2>&1; then
@@ -363,7 +367,7 @@ test_ipv6_only_uses_v6_control_plane() {
   assert_line "$log" 'report -6 Bearer ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210v6token'
   assert_not_contains "$args" 'hb v4'
   assert_line "$args" 'hb v6'
-  assert_contains "$output" "展示链接: $REPORT_PAGE"
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
   pass '仅 IPv6 测速的会话、租约和报告上传全部使用 IPv6'
 }
 
@@ -424,6 +428,7 @@ test_platform_clock_skew_stops_before_session() {
 
 test_bsg_preset_and_province_limit() {
   local args="$TEST_DIR/bsg-args.txt"
+  local foreign_args="$TEST_DIR/bsg-foreign-args.txt"
   local output="$TEST_DIR/bsg.out"
   report_env \
     SPEEDQUALITY_SSH_CLIENT_IP=1.2.3.4 SPEEDQUALITY_GEO_RESPONSE_FILE="$GEO_HUBEI" \
@@ -435,8 +440,19 @@ test_bsg_preset_and_province_limit() {
   assert_line "$args" 'sh v4'
   assert_line "$args" 'gd v4'
   assert_contains "$output" 'bsg 将选择 湖北、北京、上海和广东并自动去重'
-  assert_contains "$output" '4 个省级地区 / 12 个运营商测速点'
-  assert_contains "$output" '2.10 GB'
+  assert_contains "$output" '测速省份: 湖北,北京,上海,广东'
+  assert_contains "$output" '预计最多约 2.10 GB'
+
+  report_env \
+    SPEEDQUALITY_SSH_CLIENT_IP=8.8.8.8 SPEEDQUALITY_GEO_RESPONSE_FILE="$FOREIGN_GEO" \
+    MOCK_ARGS_FILE="$foreign_args" MOCK_TARGET_MBPS=100 \
+    bash "$RUNNER" -p bsg -s 100 >"$TEST_DIR/bsg-foreign.out" 2>&1
+  assert_not_contains "$foreign_args" 'hb v4'
+  assert_line "$foreign_args" 'bj v4'
+  assert_line "$foreign_args" 'sh v4'
+  assert_line "$foreign_args" 'gd v4'
+  assert_contains "$TEST_DIR/bsg-foreign.out" 'bsg 将只选择北京、上海和广东'
+  assert_not_contains "$TEST_DIR/bsg-foreign.out" '请手动选择'
 
   if report_env bash "$RUNNER" -p all >"$TEST_DIR/all-removed.out" 2>&1; then
     fail '已关闭的 all 仍可使用'
@@ -447,13 +463,14 @@ test_bsg_preset_and_province_limit() {
   report_env MOCK_ARGS_FILE="$args" MOCK_TARGET_MBPS=100 \
     bash "$RUNNER" -p hb,bj,sh,gd,js -s 100 >"$TEST_DIR/five-provinces.out" 2>&1
   assert_line "$args" 'js v4'
-  assert_contains "$TEST_DIR/five-provinces.out" '5 个省级地区 / 15 个运营商测速点'
+  assert_contains "$TEST_DIR/five-provinces.out" '测速省份: 湖北,北京,上海,广东,江苏'
+  assert_contains "$TEST_DIR/five-provinces.out" '预计最多约 2.62 GB'
 
   if report_env bash "$RUNNER" -p hb,bj,sh,gd,js,zj >"$TEST_DIR/six-provinces.out" 2>&1; then
     fail '单次六省测速被接受'
   fi
   assert_contains "$TEST_DIR/six-provinces.out" '单次最多测试 5 个省份'
-  pass 'bsg 使用来源省份加北上广，all 被关闭且单次最多五省'
+  pass 'bsg 优先使用来源省份加北上广，来源未知时退化为北上广三省'
 }
 
 test_exact_community_node_route() {
@@ -467,8 +484,8 @@ test_exact_community_node_route() {
 
   assert_line "$args" 'hb v4'
   assert_contains "$output" '已自动采用该省份'
-  assert_contains "$output" '1 个指定节点'
-  assert_contains "$output" '175.00 MB'
+  assert_contains "$output" '测速省份: 湖北'
+  assert_contains "$output" '预计最多约 175.00 MB'
   assert_contains "$output" '指定 SQ 节点: ct / private；最高 200 Mbps'
 
   if report_env SPEEDQUALITY_NODE_ROUTE_FILE="$FIXTURES/node-route-hb-v4.json" \
@@ -530,7 +547,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.6" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.7" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -541,12 +558,16 @@ test_traffic_estimate_and_measurement() {
     MOCK_NETDEV_AFTER_TX=50002000 MOCK_TARGET_MBPS=100 \
     bash "$RUNNER" -p hb -s 100 >"$output" 2>&1
 
-  assert_contains "$output" '上传、下载各 100 Mbps 上限估算约 525.00 MB'
-  assert_contains "$output" "下载 SpeedQuality 探测器 v1.0.6 ($probe_arch)"
+  assert_contains "$output" '预计最多约 525.00 MB'
+  assert_not_contains "$output" '下载 SpeedQuality 探测器'
   assert_contains "$output" '实际流量: 下载 100.00 MB，上传 50.00 MB，合计 150.00 MB'
-  assert_contains "$output" '统计接口: eth0'
-  assert_contains "$output" '本次 SpeedQuality 执行期间网卡差值'
-  assert_contains "$output" '可能包含同期其它进程流量'
+  [[ "$(grep -Fc '实际流量:' "$output")" -eq 1 ]] || fail '实际流量被重复输出'
+  assert_not_contains "$output" '统计接口:'
+  assert_not_contains "$output" '本次 SpeedQuality 执行期间网卡差值'
+  assert_not_contains "$output" '可能包含同期其它进程流量'
+  assert_not_contains "$output" '测试完成'
+  assert_not_contains "$output" '展示类型:'
+  assert_not_contains "$output" '展示链接:'
   pass '运行前估算流量，并把首次下载探测器计入实际流量'
 }
 
@@ -579,7 +600,7 @@ test_foreign_ssh_requires_manual_region() {
   pass '境外 SSH 来源要求手动指定省份'
 }
 
-test_foreign_ssh_interactive_prompt_does_not_offer_bsg() {
+test_foreign_ssh_interactive_prompt_offers_bsg_fallback() {
   local output="$TEST_DIR/foreign-interactive.out"
   local command
   command -v script >/dev/null 2>&1 || fail '缺少伪终端测试命令 script'
@@ -591,9 +612,8 @@ test_foreign_ssh_interactive_prompt_does_not_offer_bsg() {
   if ! printf 'hb\n\n\n' | script -qefc "$command" /dev/null >"$output" 2>&1; then
     fail '境外 SSH 来源交互选择测试失败'
   fi
-  assert_contains "$output" '测速地区 [无默认值，可填 hb 或 hb,bj，最多 5 个]'
-  assert_not_contains "$output" '无默认值，可填 bsg'
-  pass '境外 SSH 来源的交互提示不再推荐不可用的 bsg'
+  assert_contains "$output" '测速地区 [无默认值，可填 bsg、hb 或 hb,bj，最多 5 个]'
+  pass '境外 SSH 来源的交互提示允许选择退化为北上广三省的 bsg'
 }
 
 test_verified_nodequality() {
@@ -605,8 +625,8 @@ test_verified_nodequality() {
 
   assert_contains "$output" '服务器身份校验通过'
   assert_contains "$output" '时间校验通过'
-  assert_contains "$output" 'SpeedQuality + NodeQuality 关联报告'
-  assert_contains "$output" "展示链接: $REPORT_PAGE"
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
+  assert_not_contains "$output" '展示类型:'
   pass '--nq 校验同一服务器和 60 分钟内的报告'
 }
 
@@ -619,9 +639,9 @@ test_disabled_nodequality_binding_falls_back_before_fetch() {
     bash "$RUNNER" -p hb --nq "$REPORT_URL" >"$output" 2>&1
 
   assert_contains "$output" '当前已暂停 NodeQuality 关联'
-  assert_contains "$output" 'SpeedQuality 独立结果'
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
   assert_not_contains "$output" '正在校验 NodeQuality'
-  assert_not_contains "$output" 'SpeedQuality + NodeQuality 关联报告'
+  assert_not_contains "$output" '展示类型:'
   pass '运营开关关闭时不读取 NQ 并回退到独立报告'
 }
 
@@ -644,7 +664,7 @@ EOF
 
   [[ ! -e "$marker" ]] || fail 'NodeQuality 校验调用了 Python'
   assert_contains "$output" '服务器身份校验通过'
-  assert_contains "$output" 'SpeedQuality + NodeQuality 关联报告'
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
   pass 'NodeQuality 校验不依赖 Python 或虚拟环境'
 }
 
@@ -683,7 +703,7 @@ test_stale_nodequality_is_highlighted() {
   assert_contains "$output" '检测时间差过大'
   assert_contains "$output" '阈值 60 分钟'
   assert_contains "$output" '仍会绑定'
-  assert_contains "$output" 'SpeedQuality + NodeQuality 关联报告'
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
   pass '超过固定 60 分钟时仍绑定并高亮'
 }
 
@@ -695,7 +715,7 @@ test_unknown_time_is_highlighted() {
 
   assert_contains "$output" '无法确认 NodeQuality 与本次测速的时间差'
   assert_contains "$output" '仍会绑定并高亮'
-  assert_contains "$output" "展示链接: $REPORT_PAGE"
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
   pass '无法解析检测时间时仍绑定并提示'
 }
 
@@ -708,8 +728,8 @@ test_mismatched_nodequality_falls_back() {
 
   assert_contains "$output" 'NodeQuality 报告与当前服务器身份不匹配'
   assert_contains "$output" '分享链接只包含本次测速结果'
-  assert_contains "$output" 'SpeedQuality 独立结果'
-  assert_not_contains "$output" 'SpeedQuality + NodeQuality 关联报告'
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
+  assert_not_contains "$output" '展示类型:'
   pass '服务器不一致时拒绝绑定并生成独立报告'
 }
 
@@ -720,7 +740,7 @@ test_broad_mask_is_rejected() {
     SPEEDQUALITY_NODEQUALITY_RECORD_FILE="$BROAD_MASK_RECORD" \
     bash "$RUNNER" -p hb --nq "$REPORT_URL" >"$output" 2>&1
   assert_contains "$output" 'masked_ip_too_broad'
-  assert_contains "$output" 'SpeedQuality 独立结果'
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
   pass 'NodeQuality 掩码 IP 不足两段时拒绝绑定'
 }
 
@@ -785,7 +805,7 @@ test_nodequality_archive_member_limit() {
     bash "$RUNNER" -p hb --nq "$REPORT_URL" >"$output" 2>&1
 
   assert_contains "$output" 'NodeQuality 报告解析失败'
-  assert_contains "$output" 'SpeedQuality 独立结果'
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
   pass 'NodeQuality ZIP 成员数量超过上限时拒绝绑定'
 }
 
@@ -795,7 +815,8 @@ test_report_failure_falls_back_to_image() {
   report_env SPEEDQUALITY_REPORT_RESPONSE_FILE="$bad_response" \
     bash "$RUNNER" -p hb >"$TEST_DIR/report-fallback.out" 2>&1
   assert_contains "$TEST_DIR/report-fallback.out" '分享服务返回了无效链接'
-  assert_contains "$TEST_DIR/report-fallback.out" '展示链接: 未生成'
+  assert_not_contains "$TEST_DIR/report-fallback.out" '分享报告:'
+  assert_not_contains "$TEST_DIR/report-fallback.out" '展示链接:'
   pass '分享服务失败时保留终端结果'
 }
 
@@ -808,7 +829,7 @@ test_worker_injected_report_base() {
     SPEEDQUALITY_LEASE_DIR="$LEASE_DIR" SPEEDQUALITY_HAS_IPV4=1 \
     SPEEDQUALITY_HAS_IPV6=0 \
     bash "$injected" -p hb >"$TEST_DIR/injected-base.out" 2>&1
-  assert_contains "$TEST_DIR/injected-base.out" "展示链接: $REPORT_PAGE"
+  assert_contains "$TEST_DIR/injected-base.out" "分享报告: $REPORT_PAGE"
   assert_not_contains "$TEST_DIR/injected-base.out" '当前入口未配置分享服务'
   bash "$injected" --help >"$TEST_DIR/injected-help.out" 2>&1
   assert_contains "$TEST_DIR/injected-help.out" \
@@ -819,7 +840,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.6|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.7|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -833,8 +854,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.6'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.6'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.7'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.7'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
@@ -884,7 +905,7 @@ test_exact_community_node_route
 test_traffic_estimate_and_measurement
 test_chinese_provinces_and_city_rejection
 test_foreign_ssh_requires_manual_region
-test_foreign_ssh_interactive_prompt_does_not_offer_bsg
+test_foreign_ssh_interactive_prompt_offers_bsg_fallback
 test_verified_nodequality
 test_disabled_nodequality_binding_falls_back_before_fetch
 test_nodequality_does_not_require_python
