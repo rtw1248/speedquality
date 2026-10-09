@@ -124,6 +124,10 @@ func printReport(writer io.Writer, report Report) {
 		if result.Status != "ok" {
 			latency := "-"
 			download, upload := "失败", "失败"
+			unavailable := result.Error == "没有可连接的候选节点"
+			if unavailable {
+				download, upload = "-", "-"
+			}
 			if result.Latency > 0 {
 				latency = fmt.Sprintf("%.2fms", result.Latency)
 			}
@@ -141,7 +145,9 @@ func printReport(writer io.Writer, report Report) {
 				{upload, 18, "right", red},
 				{download, 18, "right", red},
 			}, reset)
-			fmt.Fprintf(writer, "  %s[失败] %s：%s%s\n", red, result.Label, result.Error, reset)
+			if !unavailable {
+				fmt.Fprintf(writer, "  %s[失败] %s：%s%s\n", red, result.Label, result.Error, reset)
+			}
 			continue
 		}
 		download, upload := "-", "-"

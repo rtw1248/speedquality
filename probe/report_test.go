@@ -19,6 +19,7 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 				Single: &ModeResult{UploadMbps: 150.5, DownloadMbps: 199.2},
 			},
 			{Label: "湖北联通", Status: "failed", Error: "节点不可用"},
+			{Label: "湖北移动", Status: "failed", Error: "没有可连接的候选节点"},
 		},
 	}
 	var output bytes.Buffer
@@ -35,10 +36,14 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 		"        IPv4        延迟          单线程上传          单线程下载",
 		"    湖北电信      8.25ms          150.50Mbps           200Mbps ✓",
 		"[失败] 湖北联通：节点不可用",
+		"    湖北移动           -                   -                   -",
 	} {
 		if !strings.Contains(plain, expected) {
 			t.Fatalf("plain report lacks %q:\n%s", expected, plain)
 		}
+	}
+	if strings.Contains(plain, "[失败] 湖北移动") || strings.Contains(plain, "没有可连接的候选节点") {
+		t.Fatalf("unavailable node should remain a compact table row:\n%s", plain)
 	}
 	if displayWidth("湖北电信") != 8 || displayWidth(padDisplay("湖北电信", 12, "right")) != 12 {
 		t.Fatal("Chinese display width padding is incorrect")

@@ -967,6 +967,7 @@ test("structured results render as terminal text and feed private node health", 
   assert.match(page, /实际流量/);
   assert.doesNotMatch(page, /达标线：|统计口径：/);
   assert.match(page, /150\.50Mbps/);
+  assert.doesNotMatch(page, /\[失败\] 联通|没有可连接的候选节点/);
   assert.doesNotMatch(page, /<table/);
   assert.equal(NODE_CORE.feedback.length, 1);
   assert.equal(NODE_CORE.feedback[0].measurements[0].lease_id, "lease_fixture_123");

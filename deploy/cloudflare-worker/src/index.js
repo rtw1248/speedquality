@@ -179,7 +179,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.4").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.5").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -1974,14 +1974,17 @@ function renderStructuredSpeedText(value, options = {}) {
       lines.push(headings.join("  "));
       for (const result of rows) {
         const failed = result.status !== "ok";
+        const unavailable = failed && result.error === "没有可连接的候选节点";
         const latencyNumber = Number(result.latency_ms);
-        const latency = !failed && result.latency_ms != null && Number.isFinite(latencyNumber)
+        const latency = result.latency_ms != null && Number.isFinite(latencyNumber)
           ? `${latencyNumber.toFixed(2)}ms`
           : "-";
         const uploadMbps = Number(result.single?.upload_mbps);
         const downloadMbps = Number(result.single?.download_mbps);
-        const uploadValue = failed ? "失败" : formatMbps(uploadMbps, targetMbps);
-        const downloadValue = failed ? "失败" : formatMbps(downloadMbps, targetMbps);
+        const uploadValue = unavailable ? "-"
+          : failed && !(uploadMbps > 0) ? "失败" : formatMbps(uploadMbps, targetMbps);
+        const downloadValue = unavailable ? "-"
+          : failed && !(downloadMbps > 0) ? "失败" : formatMbps(downloadMbps, targetMbps);
         const carrier = CARRIER_NAMES[result.carrier] || result.label || result.carrier || "-";
         const columns = [
           ansiText(padDisplay(carrier, 8, "right"), "36", colored),
@@ -1990,7 +1993,7 @@ function renderStructuredSpeedText(value, options = {}) {
           ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps, failed), colored),
         ];
         lines.push(columns.join("  "));
-        if (failed && result.error) {
+        if (failed && result.error && !unavailable) {
           lines.push(ansiText(`  [失败] ${carrier}：${result.error}`, "1;91", colored));
         }
       }
