@@ -514,7 +514,7 @@ test("speed colors use 30 and 80 percent boundaries", () => {
   }, { reportUrl: "https://sq.example.com/r/ColorDemo123" });
 
   assert.match(page, /color:#9eff6e;font-weight:700">\s*160\.00Mbps<\/span>/);
-  assert.match(page, /color:#e7741e">\s*60\.00Mbps<\/span>/);
+  assert.match(page, /color:rgb\(255,165,0\)">\s*60\.00Mbps<\/span>/);
   assert.match(page, /color:#fc5f5a;font-weight:700">\s*59\.90Mbps<\/span>/);
   assert.match(page, /color:#9eff6e;font-weight:700">\s*200Mbps ✓<\/span>/);
 });
@@ -961,7 +961,7 @@ test("structured results render as terminal text and feed private node health", 
   assert.match(page, /<span style="color:#c8faf4;font-weight:700">湖北<\/span>/);
   assert.match(page, /<span style="color:#70a598">\s*电信<\/span>/);
   assert.match(page, /<span style="color:#9eff6e">\s*8\.25ms<\/span>/);
-  assert.match(page, /<span style="color:#e7741e">\s*150\.50Mbps<\/span>/);
+  assert.match(page, /<span style="color:rgb\(255,165,0\)">\s*150\.50Mbps<\/span>/);
   assert.match(page, /<span style="color:#9eff6e;font-weight:700">\s*200Mbps ✓<\/span>/);
   assert.match(page, /<span style="color:#70a598">下载流量 <\/span><span style="color:#9eff6e">100\.00 MB<\/span> \/ /);
   assert.match(page, /报告时间：/);

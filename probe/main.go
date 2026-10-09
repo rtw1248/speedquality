@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -38,6 +37,7 @@ func main() {
 	outputPath := flag.String("output", "", "将结构化结果写入 NDJSON 文件")
 	appendOutput := flag.Bool("append", false, "追加写入结果文件")
 	diagnosticPath := flag.String("diagnostic-log", "", "将诊断事件写入 JSONL 文件")
+	referenceEpoch := flag.Int64("reference-time", 0, "本次运行的平台参考时间（Unix 秒）；默认使用本机时间")
 	jsonOutput := flag.Bool("json", false, "在标准输出打印 JSON")
 	showVersion := flag.Bool("version", false, "显示版本")
 	flag.Parse()
@@ -49,7 +49,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "[X] --lease 是必填参数")
 		os.Exit(2)
 	}
-	lease, err := loadLease(*leasePath, time.Now())
+	clock, err := newMeasurementClock(*referenceEpoch)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[X] 参考时间无效: %v\n", err)
+		os.Exit(2)
+	}
+	lease, err := loadLease(*leasePath, clock.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[X] 节点租约无效: %v\n", err)
 		os.Exit(2)
@@ -68,7 +73,7 @@ func main() {
 		fmt.Sprintf("%s %s", lease.Region.Name, displayFamily(lease.Family)),
 		terminalProgressEnabled(),
 	)
-	report := runLease(ctx, lease, progress)
+	report := runLease(ctx, lease, progress, clock.Now)
 	progress.Finish()
 	encoded, err := json.Marshal(report)
 	if err != nil {

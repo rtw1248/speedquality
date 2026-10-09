@@ -166,7 +166,7 @@ type preparedTarget struct {
 
 type transferProgress func(completed int, stage string)
 
-func runLease(ctx context.Context, lease Lease, progress *progressTracker) Report {
+func runLease(ctx context.Context, lease Lease, progress *progressTracker, now func() time.Time) Report {
 	started := time.Now()
 	diagnostic(ctx, slog.LevelInfo, "lease.started",
 		"lease_id", lease.LeaseID,
@@ -178,7 +178,7 @@ func runLease(ctx context.Context, lease Lease, progress *progressTracker) Repor
 	report := Report{
 		Version:         1,
 		LeaseID:         lease.LeaseID,
-		StartedAt:       time.Now().Unix(),
+		StartedAt:       now().Unix(),
 		Region:          lease.Region,
 		Family:          lease.Family,
 		DurationSeconds: lease.DurationSeconds,
@@ -211,7 +211,7 @@ func runLease(ctx context.Context, lease Lease, progress *progressTracker) Repor
 			}
 		}
 	}
-	report.CompletedAt = time.Now().Unix()
+	report.CompletedAt = now().Unix()
 	diagnostic(ctx, slog.LevelInfo, "lease.completed",
 		"lease_id", lease.LeaseID,
 		"duration_ms", time.Since(started).Milliseconds(),

@@ -8,10 +8,12 @@ fi
 
 lease=""
 output=""
+reference_time=""
 while (($# > 0)); do
   case "$1" in
     --lease) lease="$2"; shift 2 ;;
     --output) output="$2"; shift 2 ;;
+    --reference-time) reference_time="$2"; shift 2 ;;
     --append) shift ;;
     *) shift ;;
   esac
@@ -33,7 +35,11 @@ if [[ -n "${MOCK_ARGS_FILE:-}" ]]; then
   printf '%s %s\n' "$region" "$family" >> "$MOCK_ARGS_FILE"
 fi
 
-now=$(date +%s)
+if [[ -n "${MOCK_REFERENCE_TIMES_FILE:-}" ]]; then
+  printf '%s\n' "$reference_time" >> "$MOCK_REFERENCE_TIMES_FILE"
+fi
+
+now="${reference_time:-$(date +%s)}"
 target_mbps="${MOCK_TARGET_MBPS:-200}"
 printf '{"version":1,"lease_id":"lease_mock_%s_%s","started_at":%s,"completed_at":%s,"region":{"code":"%s","name":"%s"},"family":"%s","duration_seconds":5,"target_mbps":%s,"modes":["s"],"results":[{"carrier":"ct","label":"%s电信","node_id":"0123456789abcdef0123456789abcdef","latency_ms":8.25,"status":"ok","single":{"download_mbps":199.20,"upload_mbps":150.50,"download_bytes":124500000,"upload_bytes":94062500}}]}\n' \
   "$region" "$family" "$now" "$now" "$region" "$region_name" "$family" "$target_mbps" "$region_name" > "$output"

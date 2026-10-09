@@ -179,7 +179,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.9").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.10").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -1922,7 +1922,7 @@ function latencyAnsiCode(value, failed) {
   const latency = Number(value);
   if (failed || !Number.isFinite(latency)) return "1;91";
   if (latency <= 100) return "92";
-  if (latency <= 200) return "33";
+  if (latency <= 200) return "38;2;255;165;0";
   return "1;91";
 }
 
@@ -1931,7 +1931,7 @@ function speedAnsiCode(value, targetMbps, failed) {
   if (failed || !Number.isFinite(speed) || !targetMbps) return "1;91";
   const ratio = speed / targetMbps;
   if (ratio >= 0.8) return "1;92";
-  if (ratio >= 0.3) return "33";
+  if (ratio >= 0.3) return "38;2;255;165;0";
   return "1;91";
 }
 
@@ -2440,7 +2440,7 @@ export function renderReport(report, options = {}) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${escapeHtml(documentTitle)}</title>
   <style>
-    :root { color-scheme:dark; --bg:#050508; --surface:#ffffff1a; --text:#f8dcc0; --muted:#9aa7a7; --line:#ffffff30; --accent:#37ff8b; --ok:#9eff6e; --okbg:#18341f99; --warn:#e7741e; --warnbg:#3a240f99; --danger:#fc5f5a; --dangerbg:#481a1a99; --terminal:transparent; --terminal-text:#f8dcc0; }
+    :root { color-scheme:dark; --bg:#050508; --surface:#ffffff1a; --text:#f8dcc0; --muted:#9aa7a7; --line:#ffffff30; --accent:#37ff8b; --ok:#9eff6e; --okbg:#18341f99; --warn:#ffa500; --warnbg:#3a240f99; --danger:#fc5f5a; --dangerbg:#481a1a99; --terminal:transparent; --terminal-text:#f8dcc0; }
     * { box-sizing:border-box; }
     html { min-height:100%; background:#000; }
     body { min-height:100vh; margin:0; background:var(--bg); color:var(--text); font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; letter-spacing:0; }
@@ -2459,7 +2459,7 @@ export function renderReport(report, options = {}) {
     main { min-height:520px; padding:10px 20px; margin-top:10px; margin-bottom:10px; overflow:hidden; border-radius:10px; background:#ffffff1a; backdrop-filter:blur(3px); }
     .notice { margin:16px 0 0; padding:9px 12px; border-left:4px solid var(--line); background:var(--surface); }
     .notice.ok { border-color:var(--ok); background:var(--okbg); color:#105a38; }
-    .notice.warning { border-color:#e7741e; background:var(--warnbg); color:var(--warn); }
+    .notice.warning { border-color:#ffa500; background:var(--warnbg); color:var(--warn); }
     .notice.danger { border-color:var(--danger); background:var(--dangerbg); color:var(--danger); font-weight:650; }
     .report-pane { padding:0; }
     .header-meta { text-align:right; }
@@ -2503,7 +2503,7 @@ export function renderReport(report, options = {}) {
     .linked-report .nq-output { min-width:1000px; }
     .notice { margin:0 0 10px; padding:7px 10px; border-radius:2px; font:13px/1.45 Consolas,"Liberation Mono","Courier New",monospace; }
     .notice.ok { border-color:#4ab118; background:var(--okbg); color:#9eff6e; }
-    .notice.warning { border-color:#e7741e; background:var(--warnbg); color:#e7741e; }
+    .notice.warning { border-color:#ffa500; background:var(--warnbg); color:#ffa500; }
     .notice.danger { border-color:#bd0013; background:var(--dangerbg); color:#fc5f5a; }
     :is(.nq-terminal-scroll,.sq-terminal-scroll,.tabs-shell)::-webkit-scrollbar { width:4px; height:4px; }
     :is(.nq-terminal-scroll,.sq-terminal-scroll,.tabs-shell)::-webkit-scrollbar-track { border-radius:2px; background:#797979; }

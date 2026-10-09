@@ -45,7 +45,7 @@ function sampleReport(origin, bindStatus, options = {}) {
     time_gap_seconds: timeGapSeconds,
     nq_identity_reason: linked ? options.identityReason || "masked_ip_and_asn" : "",
     bind_status: bindStatus,
-    version: "1.0.9",
+    version: "1.0.10",
   };
 }
 

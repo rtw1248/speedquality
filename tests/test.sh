@@ -402,43 +402,44 @@ test_platform_clock_skew() {
   local mock_bin="$TEST_DIR/mock-clock-bin"
   local log="$TEST_DIR/platform-clock.log"
   local output="$TEST_DIR/platform-clock.out"
-  local platform_epoch
+  local platform_epoch offset reference_epoch report_epoch latest_epoch start_uptime end_uptime
+  local reference_times="$TEST_DIR/reference-times.txt"
+  local report_time="$TEST_DIR/report-time.txt"
   mkdir -p "$mock_bin"
   ln -s "$FIXTURES/mock-platform-curl.sh" "$mock_bin/curl"
-  platform_epoch=$(($(date +%s) + 900))
+  for offset in 300 301 900 -900; do
+    : > "$log"
+    : > "$reference_times"
+    platform_epoch=$(($(date +%s) + offset))
+    read -r start_uptime _ < /proc/uptime
+    env PATH="$mock_bin:$PATH" \
+      SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
+      SPEEDQUALITY_PROBE_BIN="$MOCK_PROBE" \
+      SPEEDQUALITY_HAS_IPV4=1 \
+      SPEEDQUALITY_HAS_IPV6=0 \
+      MOCK_PLATFORM_LOG="$log" \
+      MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
+      MOCK_PLATFORM_EPOCH="$platform_epoch" \
+      MOCK_REFERENCE_TIMES_FILE="$reference_times" \
+      MOCK_PLATFORM_REPORT_TIME_FILE="$report_time" \
+      bash "$RUNNER" -p hb >"$output" 2>&1
 
-  if env PATH="$mock_bin:$PATH" \
-    SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
-    SPEEDQUALITY_PROBE_BIN="$MOCK_PROBE" \
-    SPEEDQUALITY_HAS_IPV4=1 \
-    SPEEDQUALITY_HAS_IPV6=0 \
-    MOCK_PLATFORM_LOG="$log" \
-    MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
-    MOCK_PLATFORM_EPOCH="$platform_epoch" \
-    bash "$RUNNER" -p hb >"$output" 2>&1; then
-    fail '系统时间明显落后时仍开始测速'
-  fi
-
-  assert_contains "$output" '当前服务器系统时间比 SpeedQuality 平台慢约'
-  assert_contains "$output" '请先同步系统时间后重试；SpeedQuality 不会自动修改系统时间'
-  assert_line "$log" 'time -4'
-  assert_not_contains "$log" 'session '
-
-  platform_epoch=$(($(date +%s) + 300))
-  env PATH="$mock_bin:$PATH" \
-    SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
-    SPEEDQUALITY_PROBE_BIN="$MOCK_PROBE" \
-    SPEEDQUALITY_HAS_IPV4=1 \
-    SPEEDQUALITY_HAS_IPV6=0 \
-    MOCK_PLATFORM_LOG="$log" \
-    MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
-    MOCK_PLATFORM_EPOCH="$platform_epoch" \
-    bash "$RUNNER" -p hb >"$output" 2>&1
-
-  assert_line "$log" 'session -4'
-  assert_contains "$output" '分享报告:'
-  assert_not_contains "$output" '系统时间'
-  pass '系统时间在兼容范围内静默继续，明显偏差时在申请会话前停止'
+    assert_line "$log" 'time -4'
+    assert_line "$log" 'session -4'
+    assert_contains "$output" '分享报告:'
+    assert_not_contains "$output" '系统时间'
+    reference_epoch=$(<"$reference_times")
+    report_epoch=$(<"$report_time")
+    read -r end_uptime _ < /proc/uptime
+    latest_epoch=$((platform_epoch + ${end_uptime%%.*} - ${start_uptime%%.*} + 1))
+    [[ "$reference_epoch" =~ ^[0-9]{10}$ && "$report_epoch" =~ ^[0-9]{10}$ ]] \
+      || fail '探测器或报告没有收到平台参考时间'
+    ((reference_epoch >= platform_epoch && reference_epoch <= latest_epoch)) \
+      || fail "探测器未使用平台参考时间：$reference_epoch，不在 $platform_epoch 到 $latest_epoch 之间"
+    ((report_epoch >= reference_epoch && report_epoch <= latest_epoch)) \
+      || fail '报告未使用平台参考时间'
+  done
+  pass '本机时间偏快或偏慢时静默继续，租约和报告采用平台参考时间'
 }
 
 test_bsg_preset_and_province_limit() {
@@ -557,7 +558,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.9" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.10" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -850,7 +851,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.9|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.10|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -864,8 +865,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.9'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.9'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.10'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.10'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1

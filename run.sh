@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.0.9"
-readonly FALLBACK_PROBE_VERSION="v1.0.9"
+readonly SPEEDQUALITY_VERSION="1.0.10"
+readonly FALLBACK_PROBE_VERSION="v1.0.10"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NODEQUALITY_API="https://api.nodequality.com/api/v1"
@@ -15,8 +15,6 @@ readonly MAX_TIME_GAP_MINUTES=60
 readonly NODEQUALITY_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36"
 readonly SPEED_DURATION_SECONDS=5
 readonly MAX_SELECTED_PROVINCES=5
-readonly MAX_CLOCK_BEHIND_SECONDS=300
-readonly MAX_CLOCK_AHEAD_SECONDS=60
 readonly TEMP_MARKER_NAME=".speedquality-owned"
 
 PROBE_VERSION="${SPEEDQUALITY_PROBE_VERSION:-$DEFAULT_PROBE_VERSION}"
@@ -45,6 +43,8 @@ TEMP_DIR=""
 SPEED_LOG=""
 SPEED_DIAGNOSTIC_LOG="${SPEEDQUALITY_DIAGNOSTIC_LOG:-}"
 SPEED_TEST_EPOCH=0
+PLATFORM_TIME_EPOCH=0
+PLATFORM_TIME_UPTIME=0
 NODEQUALITY_TIME_GAP_SECONDS=""
 NODEQUALITY_REPORT_EPOCH=""
 NODEQUALITY_TIME_SOURCE=""
@@ -828,24 +828,28 @@ json_number_field() {
   sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" "$file" | head -n 1
 }
 
-format_clock_difference() {
-  local seconds="$1"
-  local hours minutes
-  if ((seconds < 60)); then
-    printf '%d 秒' "$seconds"
-  elif ((seconds < 3600)); then
-    printf '%d 分 %d 秒' "$((seconds / 60))" "$((seconds % 60))"
+monotonic_seconds() {
+  local uptime
+  [[ -r /proc/uptime ]] || return 1
+  read -r uptime _ < /proc/uptime || return 1
+  [[ "$uptime" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+  printf '%s\n' "${uptime%%.*}"
+}
+
+measurement_epoch() {
+  local uptime
+  if ((PLATFORM_TIME_EPOCH > 0)) && uptime=$(monotonic_seconds) && \
+      ((uptime >= PLATFORM_TIME_UPTIME)); then
+    printf '%s\n' "$((PLATFORM_TIME_EPOCH + uptime - PLATFORM_TIME_UPTIME))"
   else
-    hours=$((seconds / 3600))
-    minutes=$(((seconds % 3600) / 60))
-    printf '%d 小时 %d 分' "$hours" "$minutes"
+    date +%s
   fi
 }
 
-check_platform_time() {
+prepare_platform_time() {
   local response_file="$TEMP_DIR/platform-time.json"
   local status="200"
-  local platform_epoch local_epoch difference magnitude
+  local platform_epoch uptime
 
   # Fixtures provide their own lease timestamps and do not require a live platform.
   if [[ -n "${SPEEDQUALITY_LEASE_DIR:-}" &&
@@ -862,35 +866,25 @@ check_platform_time() {
     command -v curl >/dev/null 2>&1 || return 0
     status=$(curl "$PRIMARY_CURL_FAMILY" --proto '=https' --tlsv1.2 -sS --retry 1 \
       --connect-timeout 5 --max-time 10 --write-out '%{http_code}' \
+      -H 'Cache-Control: no-cache' \
       "${REPORT_BASE%/}/api/time" -o "$response_file" 2>/dev/null || true)
     if [[ "$status" != "200" ]]; then
-      warn "暂时无法校验平台时间；将由探测器继续校验节点租约"
+      warn "暂时无法获取平台时间；将使用本机时间继续校验节点租约"
       return 0
     fi
   fi
 
   platform_epoch=$(json_number_field "$response_file" epoch)
-  local_epoch=$(date +%s 2>/dev/null || true)
-  if [[ ! "$platform_epoch" =~ ^[0-9]{10}$ || ! "$local_epoch" =~ ^[0-9]{10}$ ]]; then
-    warn "平台时间响应无效；将由探测器继续校验节点租约"
+  if [[ ! "$platform_epoch" =~ ^[1-9][0-9]{9}$ ]]; then
+    warn "平台时间响应无效；将使用本机时间继续校验节点租约"
     return 0
   fi
-
-  difference=$((platform_epoch - local_epoch))
-  if ((difference > MAX_CLOCK_BEHIND_SECONDS)); then
-    magnitude=$(format_clock_difference "$difference")
-    printf '%s[X]%s 当前服务器系统时间比 SpeedQuality 平台慢约 %s\n' \
-      "$C_RED" "$C_RESET" "$magnitude" >&2
-    info "请先同步系统时间后重试；SpeedQuality 不会自动修改系统时间"
-    return 1
+  if ! uptime=$(monotonic_seconds); then
+    warn "无法读取运行计时；将使用本机时间继续校验节点租约"
+    return 0
   fi
-  if ((difference < -MAX_CLOCK_AHEAD_SECONDS)); then
-    magnitude=$(format_clock_difference "$((-difference))")
-    printf '%s[X]%s 当前服务器系统时间比 SpeedQuality 平台快约 %s\n' \
-      "$C_RED" "$C_RESET" "$magnitude" >&2
-    info "请先同步系统时间后重试；SpeedQuality 不会自动修改系统时间"
-    return 1
-  fi
+  PLATFORM_TIME_EPOCH="$platform_epoch"
+  PLATFORM_TIME_UPTIME="$uptime"
   return 0
 }
 
@@ -1502,7 +1496,8 @@ run_speedtest() {
           continue
         fi
         set +e
-        "$PROBE_BINARY" --lease "$lease_file" --output "$attempt_result" "${diagnostic_args[@]}" | tee -a "$SPEED_LOG"
+        "$PROBE_BINARY" --lease "$lease_file" --output "$attempt_result" \
+          --reference-time "$(measurement_epoch)" "${diagnostic_args[@]}" | tee -a "$SPEED_LOG"
         status=${PIPESTATUS[0]}
         set -e
         if ((status == 0)); then
@@ -1527,7 +1522,7 @@ run_speedtest() {
   if ((failed > 0)); then
     warn "$failed 个地区/IP 类型测速失败，报告会保留失败状态"
   fi
-  SPEED_TEST_EPOCH=$(date +%s)
+  SPEED_TEST_EPOCH=$(measurement_epoch)
 }
 
 clean_log() {
@@ -1676,7 +1671,7 @@ main() {
     fi
   fi
 
-  check_platform_time || exit 1
+  prepare_platform_time
   run_speedtest
 
   if [[ -n "$NODEQUALITY_URL" ]]; then

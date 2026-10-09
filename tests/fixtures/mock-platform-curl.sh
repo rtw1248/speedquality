@@ -9,6 +9,7 @@ lease_family=""
 authorization=""
 write_out=""
 response_status="200"
+tested_at=""
 
 while (($#)); do
   case "$1" in
@@ -29,6 +30,8 @@ while (($#)); do
     --data-urlencode)
       if [[ "$2" == family=* ]]; then
         lease_family="${2#family=}"
+      elif [[ "$2" == tested_at=* ]]; then
+        tested_at="${2#tested_at=}"
       fi
       shift 2
       ;;
@@ -84,6 +87,9 @@ EOF
     fi
     ;;
   */api/results)
+    if [[ -n "${MOCK_PLATFORM_REPORT_TIME_FILE:-}" ]]; then
+      printf '%s\n' "$tested_at" > "$MOCK_PLATFORM_REPORT_TIME_FILE"
+    fi
     printf 'report %s %s\n' "$curl_family" "$authorization" >> "$MOCK_PLATFORM_LOG"
     printf '%s\n' "${MOCK_PLATFORM_REPORT_URL:-https://reports.example/r/AbCdEfGhIjKl}" \
       > "$output_file"

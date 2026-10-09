@@ -33,6 +33,9 @@ curl -fsSL https://sq.yolo2.cc/run | env TERM=xterm bash
 普通测速不会安装系统软件、修改 Python、创建后台服务或删除用户文件。脚本只下载经过校验的
 `sqprobe`，并缓存到 `~/.cache/speedquality/` 供后续使用。
 
+脚本自动获取 HTTPS 平台时间，并用运行计时持续推进，供租约校验和报告时间使用；本机时钟
+偏快或偏慢时也能测速，不修改系统时间。平台时间无法获取时会提示并回退到本机时间。
+
 ## 常用示例
 
 ```bash
