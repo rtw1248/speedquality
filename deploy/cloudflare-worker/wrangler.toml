@@ -2,12 +2,10 @@ name = "speedquality"
 main = "src/index.js"
 compatibility_date = "2026-09-26"
 workers_dev = false
+routes = [{ pattern = "sq.yolo2.cc", custom_domain = true }]
 
 [triggers]
 crons = ["17 3 * * *"]
-
-# 如需自定义域名，取消下一行注释并换成自己的域名。
-# routes = [{ pattern = "sq.yolo2.cc", custom_domain = true }]
 
 [vars]
 LOG_LEVEL = "info"
