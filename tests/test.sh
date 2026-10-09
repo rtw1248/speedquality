@@ -584,6 +584,7 @@ test_traffic_estimate_and_measurement() {
 
 test_chinese_provinces_and_city_rejection() {
   local args="$TEST_DIR/chinese-args.txt"
+  local region
   report_env MOCK_ARGS_FILE="$args" \
     bash "$RUNNER" -p '湖北，北京' >"$TEST_DIR/chinese.out" 2>&1
   assert_line "$args" 'hb v4'
@@ -597,7 +598,31 @@ test_chinese_provinces_and_city_rejection() {
 
   bash "$RUNNER" --list-provinces >"$TEST_DIR/provinces.out" 2>&1
   assert_contains "$TEST_DIR/provinces.out" 'hb 湖北'
-  pass '中英文分隔符和省级中文名称可用，城市名称会被拒绝并提示'
+  for region in 'tw 台湾' 'hk 香港' 'mo 澳门'; do
+    assert_not_contains "$TEST_DIR/provinces.out" "$region"
+  done
+  for region in hk 香港 mo 澳门 tw 台湾 hb,hk; do
+    if report_env bash "$RUNNER" -p "$region" >"$TEST_DIR/unavailable-region.out" 2>&1; then
+      fail '尚未开放的公共测速地区被接受'
+    fi
+    assert_contains "$TEST_DIR/unavailable-region.out" '暂未开放公共测速'
+    assert_not_contains "$TEST_DIR/unavailable-region.out" '开始运行'
+  done
+
+  printf '%s\n' '{"country_code":"HK","region_code":"HK","region":"Hong Kong"}' \
+    > "$TEST_DIR/geo-hk.json"
+  report_env SPEEDQUALITY_SSH_CLIENT_IP=8.8.8.8 \
+    SPEEDQUALITY_GEO_RESPONSE_FILE="$TEST_DIR/geo-hk.json" \
+    bash "$RUNNER" -p bsg >"$TEST_DIR/bsg-hk.out" 2>&1
+  assert_contains "$TEST_DIR/bsg-hk.out" '测速省份: 北京,上海,广东；'
+
+  sed 's/"hb"/"hk"/' "$FIXTURES/node-route-hb-v4.json" > "$TEST_DIR/node-route-hk.json"
+  args="$TEST_DIR/hk-node-args.txt"
+  report_env SPEEDQUALITY_NODE_ROUTE_FILE="$TEST_DIR/node-route-hk.json" MOCK_ARGS_FILE="$args" \
+    bash "$RUNNER" --node sqn_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr \
+    >"$TEST_DIR/hk-node.out" 2>&1
+  assert_line "$args" 'hk v4'
+  pass '地区输入与列表一致，未开放地区提前提示且仍允许精确使用自有节点'
 }
 
 test_foreign_ssh_requires_manual_region() {

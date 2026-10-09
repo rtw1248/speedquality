@@ -137,7 +137,7 @@ SpeedQuality 选项:
       --version           显示脚本和探针版本
 
 地区代码:
-  bsg SSH 来源省份（可识别时）+ 北京、上海、广东；否则只测北上广
+  bsg SSH 来源省份（已开放公共测速时）+ 北京、上海、广东；否则只测北上广
   多个省份可使用中英文逗号或顿号分隔；单次最多 5 个，完整列表使用 --list-provinces 查看。
 
 示例:
@@ -209,20 +209,29 @@ region_code_from_token() {
   esac
 }
 
+public_region_supported() {
+  case "$1" in
+    hk|mo|tw) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 list_provinces() {
   cat <<'EOF'
-地区代码（山西 sx，陕西 sn）：
+公共测速地区代码（山西 sx，陕西 sn）：
   bj 北京    tj 天津    he 河北    sx 山西    nm 内蒙古
   ln 辽宁    jl 吉林    hl 黑龙江  sh 上海    js 江苏
   zj 浙江    ah 安徽    fj 福建    jx 江西    sd 山东
   ha 河南    hb 湖北    hn 湖南    gd 广东    gx 广西
   hi 海南    cq 重庆    sc 四川    gz 贵州    yn 云南
   xz 西藏    sn 陕西    gs 甘肃    qh 青海    nx 宁夏
-  xj 新疆    tw 台湾    hk 香港    mo 澳门
-  bsg SSH 来源省份（可识别时）+ 北京、上海、广东（自动去重）
+  xj 新疆
+  bsg SSH 来源省份（已开放公共测速时）+ 北京、上海、广东（自动去重）
 
   易混代码均保持唯一：河北 he / 湖北 hb，河南 ha / 湖南 hn，山西 sx / 陕西 sn。
   单次最多选择 5 个省级地区；全国 all 测试已关闭。
+  节点可用性随时间变化，列表不保证每个地区的三网及 IPv4/IPv6 始终可测。
+  香港、澳门、台湾暂未开放公共测速；自有节点可通过 --node 指定。
 EOF
 }
 
@@ -297,6 +306,9 @@ normalize_regions() {
         die "'$token' 是城市名称，SpeedQuality 按省级地区测速；请使用 -p $hint_code 或 -p $hint_name"
       fi
       die "不支持的省级地区: $token（使用 --list-provinces 查看代码）"
+    fi
+    if [[ -z "$NODE_ROUTE_KEY" ]] && ! public_region_supported "$code"; then
+      die "$(region_name "$code") 暂未开放公共测速，请选择 --list-provinces 中的地区"
     fi
     [[ -z "${seen[$code]:-}" ]] || continue
     seen[$code]=1
@@ -451,6 +463,11 @@ detect_auto_region() {
       warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内；请手动选择"
     return 1
   fi
+  if ! public_region_supported "$mapped"; then
+    [[ "$quiet" == "quiet" ]] || \
+      warn "SSH 来源地区 $(region_name "$mapped") 暂未开放公共测速；请用 -p 选择其他地区"
+    return 1
+  fi
   AUTO_REGION_CODE="$mapped"
   AUTO_REGION_NAME=$(region_name "$mapped")
   return 0
@@ -561,7 +578,7 @@ prepare_speed_selection() {
       if [[ -n "$AUTO_REGION_CODE" ]]; then
         info "SSH 来源 $SSH_CLIENT_IP，bsg 将选择 $AUTO_REGION_NAME、北京、上海和广东并自动去重"
       else
-        warn "SSH 来源 ${SSH_CLIENT_IP:-未知} 无法映射到中国省份；bsg 将只选择北京、上海和广东"
+        warn "SSH 来源 ${SSH_CLIENT_IP:-未知} 未匹配到当前公共测速地区；bsg 将只选择北京、上海和广东"
       fi
     fi
 

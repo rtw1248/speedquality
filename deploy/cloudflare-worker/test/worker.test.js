@@ -386,6 +386,7 @@ class FakeNodeCore {
     this.routeKey = `sqn_${"r".repeat(32)}`;
     this.nodeID = "fedcba9876543210fedcba9876543210";
     this.families = ["v4", "v6"];
+    this.region = "hb";
   }
 
   async fetch(request) {
@@ -413,7 +414,7 @@ class FakeNodeCore {
         }
         return Response.json({
           node_id: this.nodeID,
-          region: "hb",
+          region: this.region,
           carrier: "ct",
           families: this.families,
           max_mbps: 200,
@@ -758,6 +759,19 @@ test("a Route Key creates an exact-node session and never stores the raw key", a
     node_route: NODE_CORE.routeKey,
   }, "203.0.113.11"), env);
   assert.equal(tooFast.status, 400);
+
+  for (const region of ["hk", "mo", "tw"]) {
+    const publicRequest = await worker.fetch(sessionRequest({ regions: region }), env);
+    assert.equal(publicRequest.status, 400);
+    assert.match(await publicRequest.text(), /not open for public speed tests/);
+
+    NODE_CORE.region = region;
+    const exactNode = await worker.fetch(sessionRequest({
+      regions: region,
+      node_route: NODE_CORE.routeKey,
+    }), env);
+    assert.equal(exactNode.status, 201);
+  }
 });
 
 test("an IPv6-only Route Key accepts only an IPv6 session", async () => {

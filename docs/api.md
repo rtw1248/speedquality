@@ -31,6 +31,9 @@ regions=hb,bj&mode=s&ip_mode=v4&duration_seconds=5&target_mbps=200
 了哪些 IP 类型由租约和 `speed_data` 中的 `family` 记录确定。`target_mbps` 只能为
 `100`、`200` 或 `400`。
 
+公共测速暂不接受 `hk`、`mo`、`tw`，会在创建会话前返回 HTTP 400；通过 `node_route`
+精确选择已经注册的自有节点时，仍按节点实际登记地区校验。
+
 成功时返回纯文本短期 Token。会话与来源 IP 绑定，单次允许 1 至 5 个省份，并限制 IP 类型、
 目标速率、有效期和每个省份的租约重试次数。多省或同时测试 IPv4/IPv6 的任务会按预计执行时间延长，
 最长 6 小时，具体到期时间见 `X-Session-Expires-At`。

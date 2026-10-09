@@ -32,6 +32,8 @@ const REGION_CODES = new Set([
   "fj", "jx", "sd", "ha", "hb", "hn", "gd", "gx", "hi", "cq", "sc", "gz",
   "yn", "xz", "sn", "gs", "qh", "nx", "xj", "tw", "hk", "mo",
 ]);
+const PUBLIC_REGION_CODES = new Set([...REGION_CODES].filter((code) =>
+  !["hk", "mo", "tw"].includes(code)));
 const REGION_NAMES = Object.freeze({
   bj: "北京", tj: "天津", he: "河北", sx: "山西", nm: "内蒙古", ln: "辽宁",
   jl: "吉林", hl: "黑龙江", sh: "上海", js: "江苏", zj: "浙江", ah: "安徽",
@@ -997,6 +999,11 @@ async function createSession(request, env) {
     return textResponse("Invalid session request\n", 400, { "cache-control": "no-store" });
   }
   let communityNodeID = "";
+  if (!nodeRoute && regions.some((region) => !PUBLIC_REGION_CODES.has(region))) {
+    return textResponse("Requested region is not open for public speed tests\n", 400, {
+      "cache-control": "no-store",
+    });
+  }
   if (nodeRoute) {
     const resolved = await callCommunityCore(env, "/community/resolve", {
       route_key: nodeRoute,
