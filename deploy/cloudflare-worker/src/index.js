@@ -179,7 +179,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.10").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.11").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -1977,7 +1977,7 @@ function renderStructuredSpeedText(value, options = {}) {
         const unavailable = failed && result.error === "没有可连接的候选节点";
         const latencyNumber = Number(result.latency_ms);
         const latency = result.latency_ms != null && Number.isFinite(latencyNumber)
-          ? `${latencyNumber.toFixed(2)}ms`
+          ? `${Math.round(latencyNumber)}ms`
           : "-";
         const uploadMbps = Number(result.single?.upload_mbps);
         const downloadMbps = Number(result.single?.download_mbps);

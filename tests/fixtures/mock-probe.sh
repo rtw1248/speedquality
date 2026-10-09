@@ -45,7 +45,7 @@ printf '{"version":1,"lease_id":"lease_mock_%s_%s","started_at":%s,"completed_at
   "$region" "$family" "$now" "$now" "$region" "$region_name" "$family" "$target_mbps" "$region_name" > "$output"
 
 printf '\nIPv%s            延迟        单线程上传        单线程下载\n' "${family#v}"
-printf '%s电信       8.25ms       150.50Mbps       %sMbps ✓\n' "$region_name" "$target_mbps"
+printf '%s电信          8ms       150.50Mbps       %sMbps ✓\n' "$region_name" "$target_mbps"
 
 if [[ -n "${MOCK_NETDEV_FILE:-}" ]]; then
   cat > "$MOCK_NETDEV_FILE" <<EOF

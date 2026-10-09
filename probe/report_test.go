@@ -43,7 +43,7 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"        IPv4        延迟          单线程上传          单线程下载",
-		"    湖北电信      8.25ms          150.50Mbps           200Mbps ✓",
+		"    湖北电信         8ms          150.50Mbps           200Mbps ✓",
 		"[失败] 湖北联通：节点不可用",
 		"    湖北移动           -                   -                   -",
 	} {
@@ -71,7 +71,7 @@ func TestPrintReportKeepsPartialMeasurementsVisible(t *testing.T) {
 	var output bytes.Buffer
 	printReport(&output, report)
 	plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(output.String(), "")
-	if !strings.Contains(plain, "20.50ms") || !strings.Contains(plain, "123.45Mbps") ||
+	if !strings.Contains(plain, "21ms") || !strings.Contains(plain, "123.45Mbps") ||
 		!strings.Contains(plain, "上传未产生有效数据") {
 		t.Fatalf("partial failure details were hidden: %q", plain)
 	}

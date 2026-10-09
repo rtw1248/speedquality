@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"unicode"
@@ -136,7 +137,7 @@ func printReport(writer io.Writer, report Report) {
 				download, upload = "-", "-"
 			}
 			if result.Latency > 0 {
-				latency = fmt.Sprintf("%.2fms", result.Latency)
+				latency = displayLatency(result.Latency)
 			}
 			if result.Single != nil {
 				if result.Single.DownloadMbps > 0 {
@@ -167,7 +168,7 @@ func printReport(writer io.Writer, report Report) {
 		}
 		writeColumns(writer, []tableColumn{
 			{result.Label, 12, "right", cyan},
-			{fmt.Sprintf("%.2fms", result.Latency), 10, "right", latencyColor(result.Latency)},
+			{displayLatency(result.Latency), 10, "right", latencyColor(result.Latency)},
 			{upload, 18, "right", uploadColor},
 			{download, 18, "right", downloadColor},
 		}, reset)
@@ -250,6 +251,10 @@ func speedColor(value float64, targetMbps int) string {
 		return yellow
 	}
 	return green
+}
+
+func displayLatency(value float64) string {
+	return fmt.Sprintf("%.0fms", math.Round(value))
 }
 
 func latencyColor(value float64) string {

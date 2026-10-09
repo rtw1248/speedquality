@@ -960,7 +960,7 @@ test("structured results render as terminal text and feed private node health", 
   assert.match(page, /<span style="color:#c8faf4;font-weight:700">\s*单线程下载<\/span>/);
   assert.match(page, /<span style="color:#c8faf4;font-weight:700">湖北<\/span>/);
   assert.match(page, /<span style="color:#70a598">\s*电信<\/span>/);
-  assert.match(page, /<span style="color:#9eff6e">\s*8\.25ms<\/span>/);
+  assert.match(page, /<span style="color:#9eff6e">\s*8ms<\/span>/);
   assert.match(page, /<span style="color:rgb\(255,165,0\)">\s*150\.50Mbps<\/span>/);
   assert.match(page, /<span style="color:#9eff6e;font-weight:700">\s*200Mbps ✓<\/span>/);
   assert.match(page, /<span style="color:#70a598">下载流量 <\/span><span style="color:#9eff6e">100\.00 MB<\/span> \/ /);
