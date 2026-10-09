@@ -2089,39 +2089,10 @@ function markdownImage(page, prefix = "NodeQuality") {
   return `![${prefix} ${title}](${page.url})`;
 }
 
-function speedReportIntroduction(report, projectUrl) {
-  const network = reportSourceNetwork(report.source_asn, report.source_as_organization);
-  const maskedIP = stripUnsafeTerminalText(report.source_ip_masked || "") || "IP 段未知";
-  const normalizedProjectUrl = normalizeHttpsUrl(projectUrl, 2048);
-  const links = [];
-  if (normalizedProjectUrl) links.push({ label: "GitHub 项目链接", url: normalizedProjectUrl });
-  links.push({ label: "参考项目：Taier 测速", url: "https://github.com/MiaM1ku/taierspeedtest" });
-  return {
-    title: "SpeedQuality",
-    tagline: "分省三网，实测上下行",
-    links,
-    network: [
-      network.asn ? [`AS${network.asn}`, network.organization].filter(Boolean).join(" ") : "",
-      `IP: ${maskedIP}`,
-    ].filter(Boolean).join("    "),
-  };
-}
-
-function renderSpeedReportIntroduction(report, projectUrl) {
-  const intro = speedReportIntroduction(report, projectUrl);
-  const links = intro.links.map((link) =>
-    `<a href="${escapeHtml(link.url)}" rel="noreferrer">${escapeHtml(link.label)}</a>`
-  ).join(' <span aria-hidden="true">|</span> ');
-  return `<div class="sq-report-intro">
-        <h1><span>${escapeHtml(intro.title)} ——</span> <span>${escapeHtml(intro.tagline)}</span></h1>
-        <p class="sq-report-links">${links}</p>
-        <p class="sq-report-network">${escapeHtml(intro.network)}</p>
-      </div>`;
-}
-
 function speedReportHeaderText(report, options = {}) {
   const colored = options.colored === true;
   const targetMbps = Number(report.target_mbps);
+  const maskedIP = stripUnsafeTerminalText(report.source_ip_masked || "") || "IP 段未知";
   const reportVersion = boundedText(report.version, 32);
   const reportUrl = normalizeHttpsUrl(options.reportUrl, 2048);
   let runUrl = "";
@@ -2131,16 +2102,9 @@ function speedReportHeaderText(report, options = {}) {
     } catch {}
   }
   const lines = [ansiText("#".repeat(80), "36", colored)];
-  if (options.includeIntroduction !== false) {
-    const intro = speedReportIntroduction(report, options.projectUrl);
-    lines.push(ansiText(centerDisplay(`${intro.title} —— ${intro.tagline}`), "1;96", colored));
-    for (const link of intro.links) {
-      const label = `${link.label}：${link.url}`;
-      lines.push(centerIndent(label) + ansiText(`${link.label}：`, "36", colored) +
-        ansiText(link.url, "4;36", colored));
-    }
-    lines.push(ansiText(centerDisplay(intro.network), "37", colored));
-  }
+  lines.push(centerIndent(`SpeedQuality 测速报告：${maskedIP}`) +
+    ansiText("SpeedQuality 测速报告：", "1;37", colored) +
+    ansiText(maskedIP, "1;96", colored));
   if (runUrl) lines.push(ansiText(centerDisplay(`bash <(curl -fsSL ${runUrl})`), "36", colored));
   const reportDetails = [
     `报告时间：${formatTime(report.tested_at)}`,
@@ -2156,10 +2120,11 @@ function speedReportHeaderText(report, options = {}) {
   return lines.join("\n");
 }
 
-function reportLinkLines(nodeQualityUrl, reportUrl) {
+function reportLinkLines(nodeQualityUrl, reportUrl, projectUrl) {
   const links = [];
   if (nodeQualityUrl) links.push(`[NodeQuality链接](${nodeQualityUrl})`);
   if (reportUrl) links.push(`[SpeedQuality链接](${reportUrl})`);
+  if (projectUrl) links.push(`[GitHub 项目链接](${projectUrl})`);
   return links.join("\n");
 }
 
@@ -2188,17 +2153,15 @@ export function formatReportCopies(report, options = {}) {
   );
   const headerText = speedReportHeaderText(report, {
     reportUrl,
-    projectUrl: options.projectUrl,
   });
   const headerAnsi = speedReportHeaderText(report, {
     colored: true,
     reportUrl,
-    projectUrl: options.projectUrl,
   });
   const speedPlainMaterial = [headerText, speedText, trafficText].filter(Boolean).join("\n\n");
   const speedAnsiMaterial = [headerAnsi, speedAnsi, trafficAnsiText].filter(Boolean).join("\n\n");
   const nodeQuality = nodeQualityCopyPages(options.snapshot);
-  const links = reportLinkLines(nodeQualityUrl, reportUrl);
+  const links = reportLinkLines(nodeQualityUrl, reportUrl, normalizeHttpsUrl(options.projectUrl));
 
   const plain = [];
   if (hasNodeQuality && nodeQuality.plainText) plain.push(nodeQuality.plainText);
@@ -2340,7 +2303,6 @@ export function renderReport(report, options = {}) {
       : ansiToHtml(report.speed_text);
     const headerOutput = ansiToHtml(speedReportHeaderText(report, {
       colored: true,
-      includeIntroduction: false,
       reportUrl: options.reportUrl,
     }));
     const trafficOutput = ansiToHtml(trafficReportText(
@@ -2358,7 +2320,6 @@ export function renderReport(report, options = {}) {
         <pre class="ansi-output sq-output">${terminalOutput}</pre>` : "";
     content = `
     <section class="report-pane sq-addon-pane">
-      ${renderSpeedReportIntroduction(report, options.promotion?.projectUrl)}
       ${speedImage}${terminal ? `<div class="sq-terminal-scroll">${terminal}</div>` : (!speedImage ? '<p class="empty-state">测速内容暂不可用。</p>' : "")}
     </section>`;
   } else if (activeEntry?.page) {
@@ -2413,10 +2374,14 @@ export function renderReport(report, options = {}) {
   const canonicalReportUrl = normalizeHttpsUrl(options.reportUrl, 2048) || reportPath;
   const promotionHtml = isSpeedPage && promotionText ? `
     <aside class="promotion" aria-label="推广"><span class="promotion-label">推广</span>${promotionContent}</aside>` : "";
+  const projectUrl = normalizeHttpsUrl(options.promotion?.projectUrl);
+  const projectLink = projectUrl
+    ? `<a href="${escapeHtml(projectUrl)}" rel="noreferrer">GitHub 项目链接</a>`
+    : "";
   const summaryHtml = isSpeedPage ? `
     <section class="report-summary" aria-label="SpeedQuality 使用统计">
       <p>今日速度检测量：<strong>${todayUses}</strong>；总检测量：<strong>${totalUses}</strong>。感谢使用 SpeedQuality！</p>
-      <p>报告链接：<a href="${escapeHtml(canonicalReportUrl)}">${escapeHtml(canonicalReportUrl)}</a></p>
+      <p class="report-links"><span>报告链接：<a href="${escapeHtml(canonicalReportUrl)}">${escapeHtml(canonicalReportUrl)}</a></span>${projectLink}</p>
     </section>` : "";
   const footerHtml = isSpeedPage
     ? `<footer>报告将在 ${escapeHtml(formatTime(report.expires_at))} 后自动清理。</footer>`
@@ -2513,14 +2478,6 @@ export function renderReport(report, options = {}) {
     .notice.warning { border-color:#ffa500; background:var(--warnbg); color:var(--warn); }
     .notice.danger { border-color:var(--danger); background:var(--dangerbg); color:var(--danger); font-weight:650; }
     .report-pane { padding:0; }
-    .sq-report-intro { margin:8px 0 12px; text-align:center; overflow-wrap:anywhere; }
-    .sq-report-intro h1 { color:#75b8a6; font-size:18px; font-weight:600; line-height:1.5; }
-    .sq-report-intro h1 span { display:inline-block; }
-    .sq-report-intro p { margin:4px 0 0; }
-    .sq-report-links { color:var(--muted); font-size:13px; }
-    .sq-report-links a { color:#70a598; }
-    .sq-report-links span { margin-inline:4px; }
-    .sq-report-network { color:var(--muted); font:13px/1.5 Consolas,"Liberation Mono","Courier New",monospace; white-space:pre-wrap; }
     .header-meta { text-align:right; }
     .header-meta p { margin:0; }
     .header-meta a { display:inline-block; margin-top:3px; }
@@ -2547,6 +2504,7 @@ export function renderReport(report, options = {}) {
     .report-summary p { margin:0; }
     .report-summary strong { color:#9eff6e; font-weight:700; font-variant-numeric:tabular-nums; }
     .report-summary a { color:#70a598; overflow-wrap:anywhere; }
+    .report-links { display:flex; flex-wrap:wrap; gap:0 16px; }
     footer { padding:2px 0 24px; color:#8f98a4; font-size:12px; text-align:center; }
     body.linked-report,body.standalone-report { padding-bottom:18px; background:radial-gradient(ellipse 80% 80% at 50% -20%,#7877c64d,#fff0),radial-gradient(125% 125% at 50% 10%,#000 40%,#63e); background-attachment:fixed; }
     .brand-wordmark { position:relative; display:inline-block; padding-left:11px; border-left:6px solid #37ff8b; color:#fff; font:400 48px/1.2 Arial,sans-serif; text-decoration:none; }

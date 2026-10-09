@@ -1183,10 +1183,10 @@ test("report copy formats support plain text, NodeSeek, and general Markdown", (
   });
 
   for (const copy of Object.values(copies)) {
-    assert.match(copy, /SpeedQuality —— 分省三网，实测上下行/);
-    assert.match(copy, /https:\/\/github\.com\/owner\/speedquality/);
-    assert.match(copy, /https:\/\/github\.com\/MiaM1ku\/taierspeedtest/);
-    assert.match(copy, /AS64500 Example Network\s+IP: 203\.0\.\*\.\*/);
+    assert.match(copy, /SpeedQuality 测速报告：/);
+    assert.match(copy, /203\.0\.\*\.\*/);
+    assert.match(copy, /\[GitHub 项目链接\]\(https:\/\/github\.com\/owner\/speedquality\)$/);
+    assert.doesNotMatch(copy, /分省三网|taierspeedtest|AS64500|Example Network/);
   }
 
   assert.match(copies.text, /^NodeQuality 全部结果/);
@@ -1194,7 +1194,7 @@ test("report copy formats support plain text, NodeSeek, and general Markdown", (
   assert.match(copies.text, /湖北电信 200Mbps ✓/);
   assert.match(copies.text, /实际流量：下载流量 1\.00 GB \/ 上传流量 500\.00 MB \/ 合计流量 1\.50 GB/);
   assert.match(copies.text, /\[NodeQuality链接\]\(https:\/\/nodequality\.com\/r\/IHfGBj2jD8OT7BqBNUbCWTWV3XRIbpMB\)/);
-  assert.match(copies.text, /\[SpeedQuality链接\]\(https:\/\/sq\.example\.com\/r\/CopyDemo1234\)$/);
+  assert.match(copies.text, /\[SpeedQuality链接\]\(https:\/\/sq\.example\.com\/r\/CopyDemo1234\)/);
   assert.doesNotMatch(copies.text, /\u001b/);
 
   assert.match(copies.nodeseek, /^:::: tabs/);
@@ -1235,13 +1235,8 @@ test("report network identity comes from the submitter's Cloudflare metadata", a
     value: { asn: 64501, asOrganization: "Viewer Network" },
   });
   const page = await (await worker.fetch(viewerRequest, env)).text();
-  assert.match(page, /<p class="sq-report-network">AS64500 Example Network &lt;script&gt;    IP: 203\.0\.\*\.\*<\/p>/);
-  assert.doesNotMatch(page, /Forged Network|Viewer Network|203\.0\.113\.9|<script>/);
-
-  for (const asn of [undefined, 0, -1, 1.5, 4294967296]) {
-    const fallback = renderReport({ ...saved, source_asn: asn });
-    assert.match(fallback, /<p class="sq-report-network">IP: 203\.0\.\*\.\*<\/p>/);
-  }
+  assert.match(page, /203\.0\.\*\.\*/);
+  assert.doesNotMatch(page, /AS64500|Example Network|Forged Network|Viewer Network|203\.0\.113\.9|<script>/);
 });
 
 test("standalone report is saved, rendered, and HTML escaped", async () => {
@@ -1316,10 +1311,12 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
     page,
     /<a href="https:\/\/github\.com\/owner\/speedquality" rel="noreferrer">GitHub 项目链接<\/a>/,
   );
-  assert.match(page, /<h1><span>SpeedQuality ——<\/span> <span>分省三网，实测上下行<\/span><\/h1>/);
-  assert.match(page, /<a href="https:\/\/github\.com\/MiaM1ku\/taierspeedtest" rel="noreferrer">参考项目：Taier 测速<\/a>/);
-  assert.match(page, /<p class="sq-report-network">IP: 203\.0\.\*\.\*<\/p>/);
-  assert.doesNotMatch(page, /AS0\b/);
+  const terminal = page.match(/<pre class="ansi-output sq-output">([\s\S]*?)<\/pre>/)?.[1] || "";
+  assert.match(terminal, /SpeedQuality 测速报告：/);
+  assert.match(terminal, /203\.0\.\*\.\*/);
+  assert.doesNotMatch(terminal, /github\.com/);
+  assert.doesNotMatch(page, /sq-report-intro|分省三网|taierspeedtest/);
+  assert.match(page, /<p class="report-links"><span>报告链接：[\s\S]*?<\/span><a [^>]+>GitHub 项目链接<\/a><\/p>/);
   assert.match(page, /\.sq-header \.sq-wordmark \{ padding-left:0; border-left:0; \}/);
   assert.match(page, /今日速度检测量：<strong>1<\/strong>；总检测量：<strong>1<\/strong>。感谢使用 SpeedQuality！/);
   assert.match(page, /报告链接：<a href="https:\/\/rtw\.example\/r\//);
@@ -1670,7 +1667,7 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
   assert.match(speedPage, /NodeQuality header/);
   assert.match(speedPage, /今日速度检测量/);
   assert.match(speedPage, /报告将在/);
-  assert.match(speedPage, /<div class="sq-report-intro">/);
+  assert.doesNotMatch(speedPage, /<div class="sq-report-intro">/);
 });
 
 test("NodeQuality snapshot rejects unsafe archive paths", async () => {

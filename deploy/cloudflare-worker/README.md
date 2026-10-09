@@ -171,9 +171,8 @@ Token 或 Route Key，只转发 API Token，并在 D1 会话中保存私有 Core
 再开放。以后配置推广文案时，可通过 `PROMOTION_URL` 添加链接。报告会根据 `GITHUB_OWNER`
 和 `GITHUB_REPO` 另行展示 GitHub 项目地址。
 
-SQ 页顶部展示项目简介、GitHub 和 Taier 参考项目链接，以及测速服务器提交报告时的 ASN、
-网络名称和脱敏 IP。ASN 与网络名称由 Cloudflare 请求元数据提供，不接受客户端自行填写；
-旧报告没有这项记录时只显示已有的脱敏 IP。三种复制格式同步包含这些信息。
+SQ 页采用终端式报告头部，显示脱敏 IP、运行命令、时间、版本和测速配置。
+底部报告链接旁提供可点击的 GitHub 项目链接，窄屏自动换行；三种复制格式也会附上项目链接。
 
 公开 Worker 使用 JSON 结构化日志，并把 `request_id` 传给私有 Core。生产排障命令、关联字段
 和脱敏范围见 [`../../docs/observability.md`](../../docs/observability.md)。
