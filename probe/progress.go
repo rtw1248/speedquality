@@ -133,7 +133,7 @@ func (tracker *progressTracker) render() {
 
 func progressTips(nodeQualityEnabled bool) []usageTip {
 	tips := []usageTip{
-		{"用 -p hb,bj 可测多个省份，最多 5 个", 4},
+		{"用 -p hb,bj 选择省份；-l 查看完整省份列表", 4},
 		{"报告页支持复制文本、NodeSeek 和 Markdown", 2},
 		{"用 -s 100 / 200 / 400 选择限速档位", 1},
 		{"默认测 IPv4/IPv6；-v4 或 -v6 可单独测", 1},
