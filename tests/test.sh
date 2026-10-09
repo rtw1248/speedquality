@@ -527,15 +527,10 @@ test_traffic_estimate_and_measurement() {
   local mock_bin="$TEST_DIR/mock-download-bin"
   local checksums="$TEST_DIR/mock-checksums.txt"
   local platform_log="$TEST_DIR/download-platform.log"
-  local probe_sha probe_arch
+  local probe_sha
   mkdir -p "$mock_bin"
   ln -s "$FIXTURES/mock-platform-curl.sh" "$mock_bin/curl"
   probe_sha=$(sha256sum "$MOCK_PROBE" | awk '{print $1}')
-  case "$(uname -m)" in
-    x86_64|amd64) probe_arch="amd64" ;;
-    aarch64|arm64) probe_arch="arm64" ;;
-    *) fail '流量测试运行在不支持的 CPU 架构' ;;
-  esac
   printf '%s  sqprobe-linux-amd64\n%s  sqprobe-linux-arm64\n' \
     "$probe_sha" "$probe_sha" > "$checksums"
   printf '%s\n' \
@@ -547,7 +542,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.7" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.8" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -840,7 +835,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.7|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.8|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -854,8 +849,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.7'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.7'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.8'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.8'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
