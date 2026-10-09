@@ -99,3 +99,12 @@ SPEEDQUALITY_DIAGNOSTIC_LOG=/tmp/sq-diagnostic.jsonl \
 证明所有并发代码都正确，因此发布检查仍需执行 Go race detector；进程被操作系统直接杀死、
 主机断电或日志保留期已过时，最后一段事件可能不存在。Cloudflare D1 的容量控制使用单条
 条件写入，排障关注的是该原子决策及其输入，不存在常驻进程内的互斥锁死锁。
+
+## VPS 部署补充
+
+`deploy/vps/` 沿用公开层和 Core 的结构化日志及请求 ID。Nginx 配置生成器将请求 ID 传入 Web；
+Web 再传入 Core。Docker 默认每个容器保留 3 个 10 MiB 日志文件。
+用 `docker compose logs --tail=100 web core` 排查 5xx、上游超时和数据库锁等待；不公开配置文件。
+`vps.request_failed`、`vps.scheduled_failed` 和 `vps.shutdown_failed` 提供运行时错误类型。
+`/health` 表示进程可响应及依赖已配置，不证明所有第三方节点可用；应同时检查旧报告可读取、
+磁盘可写、备份成功和 Core 状态。生产验收不生成假报告，也不通过重复测速做压力测试。

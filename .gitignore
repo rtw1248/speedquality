@@ -8,3 +8,5 @@ deploy/cloudflare-worker/preview/*.html
 /resources/
 /dist/
 /probe/probe
+/deploy/vps/local/
+/deploy/vps/node_modules/

@@ -703,7 +703,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.17" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.1.0" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -1033,7 +1033,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.17|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.1.0|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -1047,8 +1047,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.17'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.17'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.1.0'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.1.0'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1

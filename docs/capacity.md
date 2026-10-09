@@ -1,5 +1,10 @@
 # 报告存储容量估算
 
+v1.1 增加 [VPS 部署](../deploy/vps/README.md)。以下记录大小估算同样适用于 SQLite 和本地快照；
+D1/R2 请求数及免费额度仅适用于 Cloudflare Worker 部署。VPS 默认两个容器各限制 1 CPU、1 GiB 内存，
+发行包缓存最多约 512 MiB，缓存可重建。磁盘规划还要留出 SQLite WAL、日志、镜像和备份空间。
+社区节点每秒轮询在 VPS 上仍产生 HTTP 请求，不能把“没有 Worker 计费”当作无限承载能力。
+
 SpeedQuality 使用两类持久存储：D1 保存结构化测速结果、报告元数据和最多 16 KiB 的
 终端文本，R2 保存 gzip 压缩后的 NodeQuality 分页快照。NodeQuality 图片继续使用原始
 地址，原始 ZIP 不会复制到本服务。

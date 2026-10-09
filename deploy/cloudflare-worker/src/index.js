@@ -182,7 +182,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.17").trim();
+  const version = String(env.PROBE_VERSION || "v1.1.0").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -2636,7 +2636,8 @@ async function serveRepositoryScript(request, env, filename, description) {
   }
   let upstream;
   try {
-    upstream = await fetch(upstreamUrl, {
+    const fetchAsset = env.ASSET_SOURCE ? env.ASSET_SOURCE.fetch.bind(env.ASSET_SOURCE) : fetch;
+    upstream = await fetchAsset(upstreamUrl, {
       headers: {
         accept: "text/plain",
         "user-agent": "SpeedQuality-Script-Proxy/1.0",
@@ -2680,7 +2681,8 @@ async function serveProbeAsset(request, env, version, asset) {
   }
   let upstream;
   try {
-    upstream = await fetch(upstreamUrl, {
+    const fetchAsset = env.ASSET_SOURCE ? env.ASSET_SOURCE.fetch.bind(env.ASSET_SOURCE) : fetch;
+    upstream = await fetchAsset(upstreamUrl, {
       headers: { accept: "application/octet-stream", "user-agent": "SpeedQuality-Release-Proxy/1.0" },
       cf: { cacheEverything: true, cacheTtl: 86400 },
     });
@@ -2704,6 +2706,13 @@ async function serveProbeAsset(request, env, version, asset) {
 
 async function routeRequest(request, env) {
   const url = new URL(request.url);
+  const maintenance = String(env.MAINTENANCE_MODE || "");
+  if ((maintenance === "drain" && ["/api/session", "/api/nodes/register"].includes(url.pathname)) ||
+      (maintenance === "readonly" && !["GET", "HEAD"].includes(request.method))) {
+    return textResponse("SpeedQuality is temporarily under maintenance; please retry later\n", 503, {
+      "cache-control": "no-store", "retry-after": "300",
+    });
+  }
 
   if (url.pathname === "/health") {
     if (request.method !== "GET" && request.method !== "HEAD") {

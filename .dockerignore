@@ -1,0 +1,15 @@
+**
+!run.sh
+!install-node.sh
+!deploy/
+!deploy/cloudflare-worker/
+!deploy/cloudflare-worker/src/
+!deploy/cloudflare-worker/src/**
+!deploy/cloudflare-worker/migrations/
+!deploy/cloudflare-worker/migrations/**
+!deploy/cloudflare-worker/package.json
+!deploy/vps/
+!deploy/vps/**
+deploy/vps/local/
+deploy/vps/test/
+deploy/vps/node_modules/

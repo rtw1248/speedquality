@@ -7,6 +7,9 @@ SpeedQuality 是面向 Linux 服务器的分省单线程测速工具。它可以
 > 当前为公网 Alpha。一键命令已可使用；兼容节点受第三方服务的可用性、鉴权和限流
 > 影响，结果页和社区节点功能仍在持续验收。
 
+已有服务器的运营者可使用 [VPS 部署方案](deploy/vps/README.md)：通过 Docker 运行 API、报告与私有 Core，
+用 SQLite、本地快照和内存缓存承接存储，Cloudflare 负责 DNS/HTTPS/CDN。原有 Worker 部署方式仍可使用。
+
 ## 快速运行
 
 Linux `amd64` 和 `arm64`：

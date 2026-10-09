@@ -8,6 +8,17 @@ permissions:
   contents: read
 
 jobs:
+  vps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+      - name: Test SQLite, proxy, migration and backup runtime
+        run: node --test deploy/vps/test/*.test.mjs
+      - name: Build public VPS image
+        run: docker build -f deploy/vps/Dockerfile -t speedquality-platform:test .
   probe:
     runs-on: ubuntu-latest
     steps:

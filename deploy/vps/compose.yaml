@@ -1,0 +1,61 @@
+name: speedquality-vps
+
+x-common: &common
+  image: speedquality-platform:1.1.0
+  pull_policy: never
+  restart: unless-stopped
+  init: true
+  user: "${SQ_UID:?Run admin init first}:${SQ_GID:?Run admin init first}"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+  mem_limit: 1g
+  cpus: 1.0
+  stop_grace_period: 70s
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  web:
+    <<: *common
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile
+    environment:
+      SQ_CONFIG: /config/public.json
+      NODE_OPTIONS: --max-old-space-size=512
+    ports:
+      - "127.0.0.1:${SQ_PUBLIC_PORT:-52800}:52800"
+    volumes:
+      - ${SQ_CONFIG_DIR:?}/public.json:/config/public.json:ro
+      - ${SQ_PUBLIC_DATA:?}:/data
+    depends_on:
+      core:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:52800/health',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  core:
+    <<: *common
+    command: [node, /core/server.mjs]
+    environment:
+      SQ_CONFIG: /config/core.json
+      SQ_RUNTIME_DIR: /app/deploy/vps/lib
+      NODE_OPTIONS: --max-old-space-size=512
+    volumes:
+      - ${SQ_CORE_DIR:?}:/core:ro
+      - ${SQ_CONFIG_DIR:?}/core.json:/config/core.json:ro
+      - ${SQ_CORE_DATA:?}:/data
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:52801/health',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
