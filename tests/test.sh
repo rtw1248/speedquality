@@ -230,15 +230,19 @@ test_short_province_and_default_speed() {
 test_auto_ssh_region() {
   local args="$TEST_DIR/auto-args.txt"
   local output="$TEST_DIR/auto.out"
-  report_env \
-    SPEEDQUALITY_SSH_CLIENT_IP=1.2.3.4 \
-    SPEEDQUALITY_GEO_RESPONSE_FILE="$GEO_HUBEI" MOCK_ARGS_FILE="$args" \
-    bash "$RUNNER" >"$output" 2>&1
-
-  assert_contains "$output" '自动选择 湖北 (hb)'
-  assert_line "$args" 'hb v4'
-  assert_contains "$output" '速度档位: 200 Mbps'
-  pass '根据 SSH 来源自动选择省份'
+  local source
+  for source in 1.2.3.4 2001:db8:1234::5678; do
+    report_env \
+      SPEEDQUALITY_SSH_CLIENT_IP="$source" \
+      SPEEDQUALITY_GEO_RESPONSE_FILE="$GEO_HUBEI" MOCK_ARGS_FILE="$args" \
+      bash "$RUNNER" >"$output" 2>&1
+    assert_contains "$output" '测速省份: 湖北；'
+    assert_not_contains "$output" '自动选择'
+    assert_not_contains "$output" "$source"
+    assert_line "$args" 'hb v4'
+    assert_contains "$output" '速度档位: 200 Mbps'
+  done
+  pass '根据 SSH 来源自动选择省份，不打印来源地址或重复提示'
 }
 
 test_auto_ssh_region_in_terminal() {
@@ -276,11 +280,8 @@ test_auto_ssh_region_in_terminal() {
     assert_not_contains "$output" '测速地区 ['
     assert_not_contains "$output" '请选择 ['
     assert_not_contains "$output" '结果展示'
-    if [[ "$scenario" == override ]]; then
-      assert_not_contains "$output" '自动选择 湖北'
-    else
-      assert_contains "$output" '自动选择 湖北 (hb)'
-    fi
+    assert_not_contains "$output" '自动选择 湖北'
+    assert_not_contains "$output" '1.2.3.4'
   done
   pass '交互终端识别省份后直接测速，auto、其他参数和 -p 覆盖均不弹出菜单'
 }
@@ -309,6 +310,8 @@ test_explicit_interactive_selection() {
       timeout -k 2s 15s script -qefc "$command" /dev/null >"$output" 2>&1 \
       || fail "显式手动选择未完成: $scenario"
     assert_contains "$output" '测速地区 ['
+    assert_not_contains "$output" '1.2.3.4'
+    assert_contains "$output" '1.2.*.*'
     assert_contains "$output" '测速档位'
     assert_contains "$output" '结果展示'
     assert_contains "$output" "速度档位: $expected_speed Mbps"
@@ -703,7 +706,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.1.0" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.1.1" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -777,6 +780,8 @@ test_foreign_ssh_requires_manual_region() {
     fail '境外 SSH 来源在非交互模式下被自动接受'
   fi
   assert_contains "$TEST_DIR/foreign.out" '不在支持的中国省级地区内'
+  assert_contains "$TEST_DIR/foreign.out" 'SSH 来源 8.8.*.*'
+  assert_not_contains "$TEST_DIR/foreign.out" '8.8.8.8'
   assert_contains "$TEST_DIR/foreign.out" '-l/--list-provinces'
   assert_contains "$TEST_DIR/foreign.out" '-p/--province'
   assert_contains "$TEST_DIR/foreign.out" "查看地区：bash <(curl -fsSL $REPORT_BASE/run) -l"
@@ -789,7 +794,7 @@ test_unavailable_ssh_exits_before_interactive_prompts() {
   local command source response
   command -v script >/dev/null 2>&1 || fail '缺少伪终端测试命令 script'
   printf '%s\n' '{}' > "$TEST_DIR/geo-unrecognized.json"
-  for source in 8.8.8.8 192.168.1.10 invalid; do
+  for source in 8.8.8.8 192.168.1.10 2001:db8:1234::5678 ::ffff:8.8.8.8 invalid; do
     for response in "$FOREIGN_GEO" "$TEST_DIR/geo-unrecognized.json"; do
       printf -v command \
         'env TERM=dumb SPEEDQUALITY_REPORT_BASE=%q SPEEDQUALITY_SSH_CLIENT_IP=%q SPEEDQUALITY_GEO_RESPONSE_FILE=%q bash %q' \
@@ -803,6 +808,7 @@ test_unavailable_ssh_exits_before_interactive_prompts() {
       assert_not_contains "$output" '测速档位'
       assert_not_contains "$output" '结果展示'
       assert_not_contains "$output" '开始运行'
+      assert_not_contains "$output" "$source"
     done
   done
 
@@ -1033,7 +1039,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.1.0|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.1.1|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -1047,8 +1053,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.1.0'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.1.0'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.1.1'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.1.1'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1

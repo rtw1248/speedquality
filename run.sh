@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.1.0"
-readonly FALLBACK_PROBE_VERSION="v1.1.0"
+readonly SPEEDQUALITY_VERSION="1.1.1"
+readonly FALLBACK_PROBE_VERSION="v1.1.1"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -402,6 +402,18 @@ private_ip_literal() {
   esac
 }
 
+masked_ssh_client_ip() {
+  local ip="${SSH_CLIENT_IP,,}"
+  ip="${ip#::ffff:}"
+  if [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    printf '%s.%s.*.*' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+  elif [[ "$ip" == *:* ]]; then
+    printf 'IPv6（已隐藏）'
+  else
+    printf '已隐藏'
+  fi
+}
+
 extract_ssh_client_ip() {
   local candidate="${SPEEDQUALITY_SSH_CLIENT_IP:-}"
   local who_ip=""
@@ -438,7 +450,7 @@ detect_auto_region() {
     return 1
   fi
   if private_ip_literal "$SSH_CLIENT_IP"; then
-    warn "SSH 来源 $SSH_CLIENT_IP 是内网地址，无法自动定位"
+    warn "SSH 来源 $(masked_ssh_client_ip) 是内网地址，无法自动定位"
     return 1
   fi
 
@@ -449,8 +461,8 @@ detect_auto_region() {
     command -v curl >/dev/null 2>&1 || die "缺少 curl"
     validate_https_url "$GEO_API" || die "地区检测 API 地址不合法"
     if ! curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --connect-timeout 5 --max-time 15 \
-      "${GEO_API%/}/$SSH_CLIENT_IP" -o "$response_file"; then
-      warn "无法查询 SSH 来源 $SSH_CLIENT_IP 的地区"
+      "${GEO_API%/}/$SSH_CLIENT_IP" -o "$response_file" 2>/dev/null; then
+      warn "无法查询 SSH 来源 $(masked_ssh_client_ip) 的地区"
       return 1
     fi
   fi
@@ -463,13 +475,13 @@ detect_auto_region() {
     cn) ;;
     hk|mo|tw) region_code="$country_code" ;;
     *)
-      warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内"
+      warn "SSH 来源 $(masked_ssh_client_ip) 不在支持的中国省级地区内"
       return 1
       ;;
   esac
   mapped=$(region_code_from_token "$region_code" || true)
   if [[ -z "$mapped" ]]; then
-    warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内"
+    warn "SSH 来源 $(masked_ssh_client_ip) 不在支持的中国省级地区内"
     return 1
   fi
   if ! public_region_supported "$mapped"; then
@@ -485,7 +497,7 @@ interactive_region_selection() {
   local answer default_region default_name
   printf '\n%sSSH 来源地区%s\n' "$C_CYAN" "$C_RESET"
   if [[ -n "$AUTO_REGION_CODE" ]]; then
-    printf '  检测到 %s -> %s (%s)\n' "$SSH_CLIENT_IP" "$AUTO_REGION_NAME" "$AUTO_REGION_CODE"
+    printf '  检测到 %s -> %s (%s)\n' "$(masked_ssh_client_ip)" "$AUTO_REGION_NAME" "$AUTO_REGION_CODE"
     printf '  如果经过 SSH 跳板机，可在这里改成实际想测的省份。\n'
   else
     printf '  未识别到可用的 SSH 来源省份，请手动选择。\n'
@@ -572,7 +584,6 @@ prepare_speed_selection() {
     if [[ -z "$REGION_INPUT" ]]; then
       REGION_INPUT="$AUTO_REGION_CODE"
       [[ -n "$REGION_INPUT" ]] || die "无法自动确定 SSH 来源地区，请使用 -p/--province 指定"
-      info "SSH 来源 $SSH_CLIENT_IP，自动选择 $AUTO_REGION_NAME ($AUTO_REGION_CODE)"
     fi
 
     normalize_regions "$REGION_INPUT"
