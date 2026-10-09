@@ -179,7 +179,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.8").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.9").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -2499,7 +2499,7 @@ export function renderReport(report, options = {}) {
     .wordmark-plus { margin:0 11px; color:#fff; font:300 34px/1 Arial,sans-serif; }
     .nq-terminal-scroll,.sq-terminal-scroll { overflow:auto; scrollbar-color:#efefef #797979; scrollbar-width:thin; }
     .linked-report .nq-terminal-scroll { min-height:500px; max-height:min(760px,calc(100vh - 205px)); }
-    .sq-terminal-scroll { max-height:min(680px,calc(100vh - 330px)); }
+    .sq-terminal-scroll { overflow-x:auto; overflow-y:hidden; }
     .linked-report .nq-output { min-width:1000px; }
     .notice { margin:0 0 10px; padding:7px 10px; border-radius:2px; font:13px/1.45 Consolas,"Liberation Mono","Courier New",monospace; }
     .notice.ok { border-color:#4ab118; background:var(--okbg); color:#9eff6e; }
@@ -2510,7 +2510,7 @@ export function renderReport(report, options = {}) {
     :is(.nq-terminal-scroll,.sq-terminal-scroll,.tabs-shell)::-webkit-scrollbar-thumb { border-radius:10px; background:#efefef; }
     :is(.nq-terminal-scroll,.sq-terminal-scroll,.tabs-shell)::-webkit-scrollbar-thumb:hover { background:#95e6ff; }
     @media (max-width:768px) { header,main,footer,.copy-actions { width:auto; margin-inline:10px; } main { padding-inline:10px; } nav a { min-width:80px; } }
-    @media (max-width:640px) { header { min-height:100px; padding:20px 0 14px; } .brand-wordmark { font-size:34px; } .combined-wordmark .brand-wordmark { font-size:22px; } .wordmark-plus { margin-inline:7px; font-size:19px; } .copy-actions button { padding:0 1em; } .copy-actions .general-md { margin-left:0; } .copy-status { right:0; bottom:0; left:0; border-radius:0; text-align:center; } .ansi-output { font-size:12px; } .linked-report .nq-output { font-size:12px; } .linked-report .nq-terminal-scroll { min-height:460px; max-height:calc(100vh - 185px); } .sq-terminal-scroll { max-height:560px; } }
+    @media (max-width:640px) { header { min-height:100px; padding:20px 0 14px; } .brand-wordmark { font-size:34px; } .combined-wordmark .brand-wordmark { font-size:22px; } .wordmark-plus { margin-inline:7px; font-size:19px; } .copy-actions button { padding:0 1em; } .copy-actions .general-md { margin-left:0; } .copy-status { right:0; bottom:0; left:0; border-radius:0; text-align:center; } .ansi-output { font-size:12px; } .linked-report .nq-output { font-size:12px; } .linked-report .nq-terminal-scroll { min-height:460px; max-height:calc(100vh - 185px); } }
   </style>
 </head>
 <body class="${hasNodeQuality ? "linked-report" : "standalone-report"}">

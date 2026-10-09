@@ -38,8 +38,7 @@ target_mbps="${MOCK_TARGET_MBPS:-200}"
 printf '{"version":1,"lease_id":"lease_mock_%s_%s","started_at":%s,"completed_at":%s,"region":{"code":"%s","name":"%s"},"family":"%s","duration_seconds":5,"target_mbps":%s,"modes":["s"],"results":[{"carrier":"ct","label":"%s电信","node_id":"0123456789abcdef0123456789abcdef","latency_ms":8.25,"status":"ok","single":{"download_mbps":199.20,"upload_mbps":150.50,"download_bytes":124500000,"upload_bytes":94062500}}]}\n' \
   "$region" "$family" "$now" "$now" "$region" "$region_name" "$family" "$target_mbps" "$region_name" > "$output"
 
-printf '\nSpeedQuality  %s / %s  限速档位 %s Mbps\n' "$region_name" "${family^^}" "$target_mbps"
-printf '运营商          延迟        单线程上传        单线程下载\n'
+printf '\nIPv%s            延迟        单线程上传        单线程下载\n' "${family#v}"
 printf '%s电信       8.25ms       150.50Mbps       %sMbps ✓\n' "$region_name" "$target_mbps"
 
 if [[ -n "${MOCK_NETDEV_FILE:-}" ]]; then

@@ -25,7 +25,7 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 	var output bytes.Buffer
 	printReport(&output, report)
 	text := output.String()
-	for _, sequence := range []string{"\x1b[1;36m", "\x1b[32m", "\x1b[33m", "\x1b[31m"} {
+	for _, sequence := range []string{"\x1b[36m", "\x1b[32m", "\x1b[33m", "\x1b[31m"} {
 		if !strings.Contains(text, sequence) {
 			t.Fatalf("report lacks ANSI sequence %q: %q", sequence, text)
 		}
@@ -42,7 +42,6 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 		t.Fatalf("report headings do not share the IPv4 color: %q", heading)
 	}
 	for _, expected := range []string{
-		"SpeedQuality 单线程测速  湖北  200 Mbps 档位",
 		"        IPv4        延迟          单线程上传          单线程下载",
 		"    湖北电信      8.25ms          150.50Mbps           200Mbps ✓",
 		"[失败] 湖北联通：节点不可用",

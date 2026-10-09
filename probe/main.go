@@ -15,12 +15,11 @@ import (
 var version = "dev"
 
 const (
-	reset    = "\x1b[0m"
-	boldCyan = "\x1b[1;36m"
-	cyan     = "\x1b[36m"
-	green    = "\x1b[32m"
-	yellow   = "\x1b[33m"
-	red      = "\x1b[31m"
+	reset  = "\x1b[0m"
+	cyan   = "\x1b[36m"
+	green  = "\x1b[32m"
+	yellow = "\x1b[33m"
+	red    = "\x1b[31m"
 )
 
 func main() {
@@ -116,11 +115,7 @@ func writeResult(path string, encoded []byte, appendOutput bool) error {
 
 func printReport(writer io.Writer, report Report) {
 	family := displayFamily(report.Family)
-	fmt.Fprintf(
-		writer,
-		"\n%sSpeedQuality 单线程测速%s  %s  %d Mbps 档位\n\n",
-		boldCyan, reset, report.Region.Name, report.TargetMbps,
-	)
+	fmt.Fprintln(writer)
 	writeColumns(writer, []tableColumn{
 		{family, 12, "right", cyan},
 		{"延迟", 10, "right", cyan},

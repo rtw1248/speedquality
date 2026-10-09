@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.0.8"
-readonly FALLBACK_PROBE_VERSION="v1.0.8"
+readonly SPEEDQUALITY_VERSION="1.0.9"
+readonly FALLBACK_PROBE_VERSION="v1.0.9"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NODEQUALITY_API="https://api.nodequality.com/api/v1"
@@ -891,10 +891,7 @@ check_platform_time() {
     info "请先同步系统时间后重试；SpeedQuality 不会自动修改系统时间"
     return 1
   fi
-  if ((difference > MAX_CLOCK_AHEAD_SECONDS)); then
-    magnitude=$(format_clock_difference "$difference")
-    warn "当前服务器系统时间比平台慢约 $magnitude，在 5 分钟兼容范围内继续"
-  fi
+  return 0
 }
 
 sha1_stdin() {
@@ -1488,6 +1485,7 @@ run_speedtest() {
   IFS=',' read -r -a region_codes <<< "$SELECTED_REGION_CODES"
   info "开始运行 SpeedQuality 测速"
   for region in "${region_codes[@]}"; do
+    printf '\n%s%s%s\n' "$C_CYAN" "$(region_name "$region")" "$C_RESET" | tee -a "$SPEED_LOG"
     for family in $RUN_FAMILIES; do
       status=1
       for attempt in 1 2; do
