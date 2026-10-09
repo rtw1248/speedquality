@@ -2513,7 +2513,7 @@ export function renderReport(report, options = {}) {
     .notice.danger { border-color:var(--danger); background:var(--dangerbg); color:var(--danger); font-weight:650; }
     .report-pane { padding:0; }
     .sq-report-intro { margin:8px 0 12px; text-align:center; overflow-wrap:anywhere; }
-    .sq-report-intro h1 { color:#75b8a6; font-size:18px; font-weight:600; line-height:1.5; }
+    .sq-report-intro h1 { color:#75b8a6; font-size:18px; font-weight:600; line-height:1.5; text-wrap:balance; }
     .sq-report-intro p { margin:4px 0 0; }
     .sq-report-links { color:var(--muted); font-size:13px; }
     .sq-report-links a { color:#70a598; }
