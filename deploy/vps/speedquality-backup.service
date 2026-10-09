@@ -1,0 +1,11 @@
+[Unit]
+Description=SpeedQuality SQLite and NodeQuality snapshot backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+EnvironmentFile=-/etc/speedquality/backup.env
+ExecStart=/bin/bash /opt/speedquality/current/public/deploy/vps/backup.sh
+TimeoutStartSec=300

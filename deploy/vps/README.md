@@ -218,6 +218,21 @@ docker run --rm --user 0:0 \
 
 这是 SQLite 在线备份，包含报告、节点状态、未过期关联报告的快照和 SHA256 清单。缓存不备份。两个数据库分别取得一致快照；需要严格保持跨服务同一时刻状态时，先停止 SQ 两个容器再备份。缺少应有的 NQ 快照会退出 2，不能当作完整备份；可能是历史报告从未存入快照，需要先核实并修复。
 
+使用上述默认数据目录时，可以安装每日定时备份：
+
+```bash
+ln -s /opt/speedquality/releases/v1.1.0 /opt/speedquality/current
+cp deploy/vps/speedquality-backup.service deploy/vps/speedquality-backup.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now speedquality-backup.timer
+systemctl start speedquality-backup.service
+systemctl status speedquality-backup.service --no-pager
+```
+
+定时任务在 UTC 03:30 后 5 分钟内运行，默认不自动删除历史备份。`current` 已存在时先检查其指向再更新。
+可以通过 `/etc/speedquality/backup.env` 设置 `SQ_STATE_DIR`、`SQ_BACKUP_ROOT`、`SQ_BACKUP_IMAGE`；
+更改 `compose.env` 为非默认数据目录时，也要调整备份脚本的输入目录。升级时同步更新 `current` 和备份镜像版本。
+
 将备份以及 `public.json`、`core.json`、`compose.env`、源站 TLS 私钥**加密后复制到另一台机器**。本机备份无法应对 VPS 磁盘丢失。可保留最近 7 份日备份和 4 份周备份；备份目录有敏感节点信息，不应公开上传 GitHub。
 
 恢复时先停止容器，再运行 `admin.mjs restore --input BACKUP_DIR --public-dir NEW_EMPTY_PUBLIC --core-dir NEW_EMPTY_CORE`。恢复工具验证所有清单文件和 SQLite 完整性，拒绝额外快照、缺失快照和非空目标。将恢复目录所有者设为 Compose 中的 UID/GID，修改 `compose.env` 数据路径后启动。至少做一次恢复到隔离目录的演练。

@@ -63,9 +63,9 @@ jobs:
       - name: Install ShellCheck
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - name: Check shell syntax
-        run: bash -n run.sh install-node.sh deploy/cloudflare-worker/preview-local.sh tests/test.sh tests/fixtures/*.sh
+        run: bash -n run.sh install-node.sh deploy/vps/backup.sh deploy/cloudflare-worker/preview-local.sh tests/test.sh tests/fixtures/*.sh
       - name: Run ShellCheck
-        run: shellcheck run.sh install-node.sh deploy/cloudflare-worker/preview-local.sh tests/test.sh tests/fixtures/*.sh
+        run: shellcheck run.sh install-node.sh deploy/vps/backup.sh deploy/cloudflare-worker/preview-local.sh tests/test.sh tests/fixtures/*.sh
       - name: Run tests
         run: bash tests/test.sh
   worker:
