@@ -179,7 +179,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.3").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.4").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -2007,7 +2007,7 @@ function trafficReportText(
 ) {
   if (!hasTraffic) return "";
   const colored = options.colored === true;
-  return `${ansiText("流量消耗（估算）：", "1;37", colored)}` +
+  return `${ansiText("实际流量：", "1;37", colored)}` +
     `${ansiText("下载流量 ", "36", colored)}${ansiText(formatBytes(trafficRxBytes), "92", colored)} / ` +
     `${ansiText("上传流量 ", "36", colored)}${ansiText(formatBytes(trafficTxBytes), "92", colored)} / ` +
     `${ansiText("合计流量 ", "36", colored)}${ansiText(formatBytes(trafficRxBytes + trafficTxBytes), "1;92", colored)}`;

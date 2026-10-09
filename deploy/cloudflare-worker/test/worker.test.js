@@ -931,11 +931,19 @@ test("structured results render as terminal text and feed private node health", 
   const NODE_CORE = new FakeNodeCore();
   const env = { DB, NODE_CORE, RATE_LIMIT_SALT: "test-salt" };
   const token = (await (await worker.fetch(sessionRequest(), env)).text()).trim();
+  const speedReport = JSON.parse(structuredSpeedData());
+  speedReport.results.push({
+    carrier: "cu",
+    label: "湖北联通",
+    node_id: "abcdef0123456789abcdef0123456789",
+    status: "failed",
+    error: "没有可连接的候选节点",
+  });
   const fields = basicFields({
     ip_mode: "v4",
     speed_url: "",
     speed_text: "",
-    speed_data: structuredSpeedData(),
+    speed_data: JSON.stringify(speedReport),
   });
   const request = resultRequest(fields, { authorization: `Bearer ${token}` });
   const response = await worker.fetch(request, env);
@@ -956,7 +964,7 @@ test("structured results render as terminal text and feed private node health", 
   assert.match(page, /报告时间：/);
   assert.match(page, /200Mbps ✓/);
   assert.match(page, /测速配置：单线程 \/ 200 Mbps 档位 \/ 每方向 5 秒/);
-  assert.match(page, /流量消耗（估算）/);
+  assert.match(page, /实际流量/);
   assert.doesNotMatch(page, /达标线：|统计口径：/);
   assert.match(page, /150\.50Mbps/);
   assert.doesNotMatch(page, /<table/);
@@ -965,6 +973,8 @@ test("structured results render as terminal text and feed private node health", 
   assert.equal(NODE_CORE.feedback[0].measurements[0].node_id, "0123456789abcdef0123456789abcdef");
   assert.equal(NODE_CORE.feedback[0].measurements[0].download_bytes, 124500000);
   assert.equal(NODE_CORE.feedback[0].measurements[0].upload_bytes, 94062500);
+  assert.equal(NODE_CORE.feedback[0].measurements[1].node_id, "abcdef0123456789abcdef0123456789");
+  assert.equal(NODE_CORE.feedback[0].measurements[1].status, "failed");
 });
 
 test("structured result target must match the session", async () => {
@@ -1131,7 +1141,7 @@ test("report copy formats support plain text, NodeSeek, and general Markdown", (
   assert.match(copies.text, /^NodeQuality 全部结果/);
   assert.match(copies.text, /NodeQuality 全部结果/);
   assert.match(copies.text, /湖北电信 200Mbps ✓/);
-  assert.match(copies.text, /流量消耗（估算）：下载流量 1\.00 GB \/ 上传流量 500\.00 MB \/ 合计流量 1\.50 GB/);
+  assert.match(copies.text, /实际流量：下载流量 1\.00 GB \/ 上传流量 500\.00 MB \/ 合计流量 1\.50 GB/);
   assert.match(copies.text, /\[NodeQuality链接\]\(https:\/\/nodequality\.com\/r\/IHfGBj2jD8OT7BqBNUbCWTWV3XRIbpMB\)/);
   assert.match(copies.text, /\[SpeedQuality链接\]\(https:\/\/sq\.example\.com\/r\/CopyDemo1234\)$/);
   assert.doesNotMatch(copies.text, /\u001b/);
@@ -1187,7 +1197,7 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.match(page, /合计/);
   assert.match(page, /150\.00 MB/);
   assert.match(page, /测速配置：单线程 \/ 200 Mbps 档位 \/ 每方向 5 秒/);
-  assert.match(page, /流量消耗（估算）/);
+  assert.match(page, /实际流量/);
   assert.doesNotMatch(page, /达标线：|统计口径：/);
   assert.match(page, /aria-label="推广"/);
   assert.equal((page.match(/>复制文本<\/button>/g) || []).length, 2);
@@ -1364,7 +1374,7 @@ test("reports created before traffic fields remain renderable", async () => {
     new Request(reportUrl),
     { DB },
   )).text();
-  assert.doesNotMatch(page, /流量消耗（估算）/);
+  assert.doesNotMatch(page, /实际流量/);
 });
 
 test("verified stale NodeQuality report is linked with a warning", async () => {

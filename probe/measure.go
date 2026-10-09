@@ -221,11 +221,19 @@ func prepareTarget(ctx context.Context, family string, target TargetGroup) prepa
 		"duration_ms", time.Since(started).Milliseconds(),
 	)
 	if len(ranked) == 0 {
+		// The lease is already ranked by Core. Reporting its first candidate lets
+		// Core avoid serving the same unreachable endpoint on the next run.
+		if len(target.Candidates) > 0 {
+			result.NodeID = target.Candidates[0].ID
+		}
 		result.Error = "没有可连接的候选节点"
 		return preparedTarget{result: result}
 	}
 	var activationErrors []string
 	for _, item := range ranked {
+		if result.NodeID == "" {
+			result.NodeID = item.candidate.ID
+		}
 		activationStarted := time.Now()
 		activatedKey, err := activateCandidate(ctx, item.candidate)
 		if err != nil {

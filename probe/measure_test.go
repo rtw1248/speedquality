@@ -165,3 +165,28 @@ func TestByteRateLimiterPacesAggregateBytes(t *testing.T) {
 		t.Fatalf("limiter elapsed = %v, want about 524ms", elapsed)
 	}
 }
+
+func TestPrepareTargetReportsTopUnreachableCandidate(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("local sockets are unavailable: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+
+	target := TargetGroup{
+		Carrier: "ct",
+		Label:   "湖北电信",
+		Candidates: []Candidate{
+			{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Address: "127.0.0.1", Port: port},
+			{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Address: "127.0.0.1", Port: port},
+		},
+	}
+	prepared := prepareTarget(context.Background(), "v4", target)
+	if prepared.result.Status != "failed" || prepared.result.NodeID != target.Candidates[0].ID {
+		t.Fatalf("unreachable result = %#v", prepared.result)
+	}
+	if prepared.result.Error != "没有可连接的候选节点" {
+		t.Fatalf("unreachable error = %q", prepared.result.Error)
+	}
+}
