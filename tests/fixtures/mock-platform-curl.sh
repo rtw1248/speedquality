@@ -48,6 +48,10 @@ done
 
 [[ -n "$output_file" && -n "$url" && -n "${MOCK_PLATFORM_LOG:-}" ]]
 case "$url" in
+  */api/time)
+    printf 'time %s\n' "$curl_family" >> "$MOCK_PLATFORM_LOG"
+    printf '{"version":1,"epoch":%s}\n' "${MOCK_PLATFORM_EPOCH:-$(date +%s)}" > "$output_file"
+    ;;
   */checksums.txt)
     cp -- "${MOCK_PLATFORM_CHECKSUMS_FILE:?}" "$output_file"
     ;;

@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.0.1"
-readonly FALLBACK_PROBE_VERSION="v1.0.1"
+readonly SPEEDQUALITY_VERSION="1.0.2"
+readonly FALLBACK_PROBE_VERSION="v1.0.2"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NODEQUALITY_API="https://api.nodequality.com/api/v1"
@@ -15,6 +15,8 @@ readonly MAX_TIME_GAP_MINUTES=60
 readonly NODEQUALITY_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36"
 readonly SPEED_DURATION_SECONDS=5
 readonly MAX_SELECTED_PROVINCES=5
+readonly MAX_CLOCK_BEHIND_SECONDS=300
+readonly MAX_CLOCK_AHEAD_SECONDS=60
 readonly TEMP_MARKER_NAME=".speedquality-owned"
 
 PROBE_VERSION="${SPEEDQUALITY_PROBE_VERSION:-$DEFAULT_PROBE_VERSION}"
@@ -824,6 +826,75 @@ json_number_field() {
   sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" "$file" | head -n 1
 }
 
+format_clock_difference() {
+  local seconds="$1"
+  local hours minutes
+  if ((seconds < 60)); then
+    printf '%d 秒' "$seconds"
+  elif ((seconds < 3600)); then
+    printf '%d 分 %d 秒' "$((seconds / 60))" "$((seconds % 60))"
+  else
+    hours=$((seconds / 3600))
+    minutes=$(((seconds % 3600) / 60))
+    printf '%d 小时 %d 分' "$hours" "$minutes"
+  fi
+}
+
+check_platform_time() {
+  local response_file="$TEMP_DIR/platform-time.json"
+  local status="200"
+  local platform_epoch local_epoch difference magnitude
+
+  # Fixtures provide their own lease timestamps and do not require a live platform.
+  if [[ -n "${SPEEDQUALITY_LEASE_DIR:-}" &&
+        -z "${SPEEDQUALITY_PLATFORM_TIME_FILE:-}" ]]; then
+    return 0
+  fi
+  [[ "$REPORT_BASE" != "$REPORT_BASE_PLACEHOLDER" ]] || return 0
+  validate_https_url "$REPORT_BASE" || return 0
+
+  if [[ -n "${SPEEDQUALITY_PLATFORM_TIME_FILE:-}" ]]; then
+    [[ -r "$SPEEDQUALITY_PLATFORM_TIME_FILE" ]] || die "平台时间响应文件不可读"
+    response_file="$SPEEDQUALITY_PLATFORM_TIME_FILE"
+  else
+    command -v curl >/dev/null 2>&1 || return 0
+    status=$(curl "$PRIMARY_CURL_FAMILY" --proto '=https' --tlsv1.2 -sS --retry 1 \
+      --connect-timeout 5 --max-time 10 --write-out '%{http_code}' \
+      "${REPORT_BASE%/}/api/time" -o "$response_file" 2>/dev/null || true)
+    if [[ "$status" != "200" ]]; then
+      warn "暂时无法校验平台时间；将由探测器继续校验节点租约"
+      return 0
+    fi
+  fi
+
+  platform_epoch=$(json_number_field "$response_file" epoch)
+  local_epoch=$(date +%s 2>/dev/null || true)
+  if [[ ! "$platform_epoch" =~ ^[0-9]{10}$ || ! "$local_epoch" =~ ^[0-9]{10}$ ]]; then
+    warn "平台时间响应无效；将由探测器继续校验节点租约"
+    return 0
+  fi
+
+  difference=$((platform_epoch - local_epoch))
+  if ((difference > MAX_CLOCK_BEHIND_SECONDS)); then
+    magnitude=$(format_clock_difference "$difference")
+    printf '%s[X]%s 当前服务器系统时间比 SpeedQuality 平台慢约 %s\n' \
+      "$C_RED" "$C_RESET" "$magnitude" >&2
+    info "请先同步系统时间后重试；SpeedQuality 不会自动修改系统时间"
+    return 1
+  fi
+  if ((difference < -MAX_CLOCK_AHEAD_SECONDS)); then
+    magnitude=$(format_clock_difference "$((-difference))")
+    printf '%s[X]%s 当前服务器系统时间比 SpeedQuality 平台快约 %s\n' \
+      "$C_RED" "$C_RESET" "$magnitude" >&2
+    info "请先同步系统时间后重试；SpeedQuality 不会自动修改系统时间"
+    return 1
+  fi
+  if ((difference > MAX_CLOCK_AHEAD_SECONDS)); then
+    magnitude=$(format_clock_difference "$difference")
+    warn "当前服务器系统时间比平台慢约 $magnitude，在 5 分钟兼容范围内继续"
+  fi
+}
+
 sha1_stdin() {
   if command -v sha1sum >/dev/null 2>&1; then
     sha1sum | awk '{print $1}'
@@ -1630,6 +1701,7 @@ main() {
     fi
   fi
 
+  check_platform_time || exit 1
   run_speedtest
 
   if [[ -n "$NODEQUALITY_URL" ]]; then

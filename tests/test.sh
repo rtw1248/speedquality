@@ -394,6 +394,34 @@ test_node_directory_error_is_explained_without_retry() {
   pass '节点目录为空时显示明确原因且不做无效重试'
 }
 
+test_platform_clock_skew_stops_before_session() {
+  local mock_bin="$TEST_DIR/mock-clock-bin"
+  local log="$TEST_DIR/platform-clock.log"
+  local output="$TEST_DIR/platform-clock.out"
+  local platform_epoch
+  mkdir -p "$mock_bin"
+  ln -s "$FIXTURES/mock-platform-curl.sh" "$mock_bin/curl"
+  platform_epoch=$(($(date +%s) + 900))
+
+  if env PATH="$mock_bin:$PATH" \
+    SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
+    SPEEDQUALITY_PROBE_BIN="$MOCK_PROBE" \
+    SPEEDQUALITY_HAS_IPV4=1 \
+    SPEEDQUALITY_HAS_IPV6=0 \
+    MOCK_PLATFORM_LOG="$log" \
+    MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
+    MOCK_PLATFORM_EPOCH="$platform_epoch" \
+    bash "$RUNNER" -p hb >"$output" 2>&1; then
+    fail '系统时间明显落后时仍开始测速'
+  fi
+
+  assert_contains "$output" '当前服务器系统时间比 SpeedQuality 平台慢约'
+  assert_contains "$output" '请先同步系统时间后重试；SpeedQuality 不会自动修改系统时间'
+  assert_line "$log" 'time -4'
+  assert_not_contains "$log" 'session '
+  pass '系统时间明显偏差时在申请会话和传输测速流量前停止'
+}
+
 test_bsg_preset_and_province_limit() {
   local args="$TEST_DIR/bsg-args.txt"
   local output="$TEST_DIR/bsg.out"
@@ -502,7 +530,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.1" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.2" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -514,7 +542,7 @@ test_traffic_estimate_and_measurement() {
     bash "$RUNNER" -p hb -s 100 >"$output" 2>&1
 
   assert_contains "$output" '上传、下载各 100 Mbps 上限估算约 525.00 MB'
-  assert_contains "$output" "下载 SpeedQuality 探测器 v1.0.1 ($probe_arch)"
+  assert_contains "$output" "下载 SpeedQuality 探测器 v1.0.2 ($probe_arch)"
   assert_contains "$output" '实际流量: 下载 100.00 MB，上传 50.00 MB，合计 150.00 MB'
   assert_contains "$output" '统计接口: eth0'
   assert_contains "$output" '本次 SpeedQuality 执行期间网卡差值'
@@ -791,7 +819,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.1|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.2|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -805,8 +833,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.1'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.1'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.2'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.2'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
@@ -850,6 +878,7 @@ test_ip_family_selection
 test_default_dual_uses_family_bound_sessions
 test_ipv6_only_uses_v6_control_plane
 test_node_directory_error_is_explained_without_retry
+test_platform_clock_skew_stops_before_session
 test_bsg_preset_and_province_limit
 test_exact_community_node_route
 test_traffic_estimate_and_measurement

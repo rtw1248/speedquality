@@ -540,6 +540,27 @@ test("feature endpoint exposes the NodeQuality binding switch", async () => {
   assert.deepEqual(await disabled.json(), { version: 1, nodequality_binding: false });
 });
 
+test("time endpoint exposes an uncached platform timestamp", async () => {
+  const before = Math.floor(Date.now() / 1000);
+  const response = await worker.fetch(new Request("https://rtw.example/api/time"), {});
+  const after = Math.floor(Date.now() / 1000);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const body = await response.json();
+  assert.equal(body.version, 1);
+  assert.ok(body.epoch >= before && body.epoch <= after);
+
+  const head = await worker.fetch(new Request("https://rtw.example/api/time", {
+    method: "HEAD",
+  }), {});
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), "");
+  const rejected = await worker.fetch(new Request("https://rtw.example/api/time", {
+    method: "POST",
+  }), {});
+  assert.equal(rejected.status, 405);
+});
+
 test("report addresses are masked before storage", () => {
   assert.equal(maskedReportAddress("203.0.113.9"), "203.0.*.*");
   assert.equal(maskedReportAddress("2001:0db8:abcd:1234::9"), "2001:db8:abcd::/48");

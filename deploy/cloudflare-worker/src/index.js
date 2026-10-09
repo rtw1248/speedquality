@@ -179,7 +179,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.1").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.2").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -2704,6 +2704,22 @@ async function routeRequest(request, env) {
     return new Response(request.method === "HEAD" ? null : JSON.stringify({
       version: 1,
       nodequality_binding: nodeQualityBindingEnabled(env),
+    }), {
+      status: 200,
+      headers: commonHeaders({
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      }),
+    });
+  }
+
+  if (url.pathname === "/api/time") {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return textResponse("Method Not Allowed\n", 405, { allow: "GET, HEAD" });
+    }
+    return new Response(request.method === "HEAD" ? null : JSON.stringify({
+      version: 1,
+      epoch: Math.floor(Date.now() / 1000),
     }), {
       status: 200,
       headers: commonHeaders({

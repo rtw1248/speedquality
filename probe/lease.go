@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const maxLeaseBytes = 256 * 1024
+const (
+	maxLeaseBytes      = 256 * 1024
+	maxFutureClockSkew = 5 * time.Minute
+)
 
 type Lease struct {
 	Version         int           `json:"version"`
@@ -102,7 +105,7 @@ func (lease Lease) validate(now time.Time) error {
 		return errors.New("invalid lease lifetime")
 	}
 	nowUnix := now.Unix()
-	if lease.IssuedAt > nowUnix+60 {
+	if lease.IssuedAt > nowUnix+int64(maxFutureClockSkew/time.Second) {
 		return errors.New("lease issue time is in the future")
 	}
 	if lease.ExpiresAt <= nowUnix {

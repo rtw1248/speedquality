@@ -34,6 +34,26 @@ func TestLeaseValidationAcceptsGenericOperations(t *testing.T) {
 	}
 }
 
+func TestLeaseValidationAllowsFiveMinuteSlowClock(t *testing.T) {
+	now := time.Unix(2_000_000_000, 0)
+	lease := validTestLease(now)
+	lease.IssuedAt = now.Add(maxFutureClockSkew).Unix()
+	lease.ExpiresAt = lease.IssuedAt + 120
+	if err := lease.validate(now); err != nil {
+		t.Fatalf("lease within clock skew tolerance rejected: %v", err)
+	}
+}
+
+func TestLeaseValidationRejectsClockFurtherThanFiveMinutesBehind(t *testing.T) {
+	now := time.Unix(2_000_000_000, 0)
+	lease := validTestLease(now)
+	lease.IssuedAt = now.Add(maxFutureClockSkew + time.Second).Unix()
+	lease.ExpiresAt = lease.IssuedAt + 120
+	if err := lease.validate(now); err == nil {
+		t.Fatal("lease beyond clock skew tolerance was accepted")
+	}
+}
+
 func TestLeaseValidationRejectsCrossHostOperation(t *testing.T) {
 	now := time.Now()
 	lease := validTestLease(now)
