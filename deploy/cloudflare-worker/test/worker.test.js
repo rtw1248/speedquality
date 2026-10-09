@@ -163,7 +163,7 @@ class FakeD1 {
         }
         const [
           id, createdAt, expiresAt, testedAt, regions, mode, ipMode,
-          sourceIPMasked,
+          sourceIPMasked, sourceAsn, sourceAsOrganization,
           speedUrl, speedText, speedData, durationSeconds, targetMbps,
           trafficRxBytes, trafficTxBytes,
           nqUrl, nqTestedAt, nqTimeSource, timeGapSeconds, nqIdentityReason,
@@ -179,6 +179,8 @@ class FakeD1 {
           mode,
           ip_mode: ipMode,
           source_ip_masked: sourceIPMasked,
+          source_asn: sourceAsn,
+          source_as_organization: sourceAsOrganization,
           speed_url: speedUrl,
           speed_text: speedText,
           speed_data: speedData,
@@ -1135,6 +1137,9 @@ test("binary endpoint proxies only configured release assets", async () => {
 test("report copy formats support plain text, NodeSeek, and general Markdown", () => {
   const report = {
     id: "CopyDemo1234",
+    source_ip_masked: "203.0.*.*",
+    source_asn: 64500,
+    source_as_organization: "Example Network",
     tested_at: 1780000000,
     regions: "湖北",
     target_mbps: 200,
@@ -1174,7 +1179,15 @@ test("report copy formats support plain text, NodeSeek, and general Markdown", (
   const copies = formatReportCopies(report, {
     snapshot,
     reportUrl: "https://sq.example.com/r/CopyDemo1234",
+    projectUrl: "https://github.com/owner/speedquality",
   });
+
+  for (const copy of Object.values(copies)) {
+    assert.match(copy, /SpeedQuality —— 分省三网，实测上下行/);
+    assert.match(copy, /https:\/\/github\.com\/owner\/speedquality/);
+    assert.match(copy, /https:\/\/github\.com\/MiaM1ku\/taierspeedtest/);
+    assert.match(copy, /AS64500 Example Network\s+IP: 203\.0\.\*\.\*/);
+  }
 
   assert.match(copies.text, /^NodeQuality 全部结果/);
   assert.match(copies.text, /NodeQuality 全部结果/);
@@ -1198,6 +1211,39 @@ test("report copy formats support plain text, NodeSeek, and general Markdown", (
   assert.match(copies.markdown, /<\/textarea>/);
 });
 
+test("report network identity comes from the submitter's Cloudflare metadata", async () => {
+  const DB = new FakeD1();
+  const env = { DB, RATE_LIMIT_SALT: "test-salt" };
+  const fields = basicFields({
+    source_asn: "12345",
+    source_as_organization: "Forged Network",
+  });
+  const token = await resultSessionToken(fields, env);
+  const request = resultRequest(fields, { authorization: `Bearer ${token}` });
+  Object.defineProperty(request, "cf", {
+    value: { asn: 64500, asOrganization: "\u001b[31mExample\u001b[0m\nNetwork <script>" },
+  });
+  const response = await worker.fetch(request, env);
+  assert.equal(response.status, 201);
+  const reportUrl = (await response.text()).trim();
+  const saved = DB.reports.get(reportUrl.split("/").pop());
+  assert.equal(saved.source_asn, 64500);
+  assert.equal(saved.source_as_organization, "Example Network <script>");
+
+  const viewerRequest = new Request(reportUrl);
+  Object.defineProperty(viewerRequest, "cf", {
+    value: { asn: 64501, asOrganization: "Viewer Network" },
+  });
+  const page = await (await worker.fetch(viewerRequest, env)).text();
+  assert.match(page, /<p class="sq-report-network">AS64500 Example Network &lt;script&gt;    IP: 203\.0\.\*\.\*<\/p>/);
+  assert.doesNotMatch(page, /Forged Network|Viewer Network|203\.0\.113\.9|<script>/);
+
+  for (const asn of [undefined, 0, -1, 1.5, 4294967296]) {
+    const fallback = renderReport({ ...saved, source_asn: asn });
+    assert.match(fallback, /<p class="sq-report-network">IP: 203\.0\.\*\.\*<\/p>/);
+  }
+});
+
 test("standalone report is saved, rendered, and HTML escaped", async () => {
   const DB = new FakeD1();
   const env = {
@@ -1216,6 +1262,8 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.equal(saved.bind_status, "standalone");
   assert.equal(saved.nq_url, "");
   assert.equal(saved.source_ip_masked, "203.0.*.*");
+  assert.equal(saved.source_asn, null);
+  assert.equal(saved.source_as_organization, "");
 
   const pageResponse = await worker.fetch(new Request(`${reportUrl}?tab=speed`), env);
   const page = await pageResponse.text();
@@ -1266,12 +1314,12 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.match(page, /https:\/\/github\.com\/owner\/speedquality/);
   assert.match(
     page,
-    /<span style="color:#70a598;text-decoration:underline">https:\/\/github\.com\/owner\/speedquality<\/span>/,
+    /<a href="https:\/\/github\.com\/owner\/speedquality" rel="noreferrer">GitHub 项目链接<\/a>/,
   );
-  assert.doesNotMatch(
-    page,
-    /<span style="color:#70a598;text-decoration:underline">\s+https:\/\/github\.com\/owner\/speedquality/,
-  );
+  assert.match(page, /<h1>SpeedQuality —— 分省三网，实测上下行<\/h1>/);
+  assert.match(page, /<a href="https:\/\/github\.com\/MiaM1ku\/taierspeedtest" rel="noreferrer">参考项目：Taier 测速<\/a>/);
+  assert.match(page, /<p class="sq-report-network">IP: 203\.0\.\*\.\*<\/p>/);
+  assert.doesNotMatch(page, /AS0\b/);
   assert.match(page, /\.sq-header \.sq-wordmark \{ padding-left:0; border-left:0; \}/);
   assert.match(page, /今日速度检测量：<strong>1<\/strong>；总检测量：<strong>1<\/strong>。感谢使用 SpeedQuality！/);
   assert.match(page, /报告链接：<a href="https:\/\/rtw\.example\/r\//);
@@ -1583,6 +1631,7 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
   assert.doesNotMatch(page, /今日速度检测量/);
   assert.doesNotMatch(page, /服务器身份与时间均已校验/);
   assert.doesNotMatch(page, /报告将在/);
+  assert.doesNotMatch(page, /<div class="sq-report-intro">/);
 
   const allPage = await (await worker.fetch(
     new Request(`${reportUrl}?tab=nq-all`),
@@ -1621,6 +1670,7 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
   assert.match(speedPage, /NodeQuality header/);
   assert.match(speedPage, /今日速度检测量/);
   assert.match(speedPage, /报告将在/);
+  assert.match(speedPage, /<div class="sq-report-intro">/);
 });
 
 test("NodeQuality snapshot rejects unsafe archive paths", async () => {

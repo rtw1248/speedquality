@@ -26,6 +26,8 @@ function sampleReport(origin, bindStatus, options = {}) {
     mode: "s",
     ip_mode: families.length > 1 ? "v6" : families[0] || "v4",
     source_ip_masked: "203.0.*.*",
+    source_asn: 64500,
+    source_as_organization: "Example Network",
     target_mbps: targetMbps,
     speed_url: "",
     speed_text: "SpeedQuality preview",

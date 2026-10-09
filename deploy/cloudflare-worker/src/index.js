@@ -266,6 +266,18 @@ function stripUnsafeTerminalText(value) {
     .trim();
 }
 
+function reportSourceNetwork(asnValue, organizationValue) {
+  const asn = Number(asnValue);
+  if (!Number.isSafeInteger(asn) || asn <= 0 || asn > 4294967295) {
+    return { asn: null, organization: "" };
+  }
+  const organization = boundedText(
+    stripUnsafeTerminalText(organizationValue).replace(/\s+/g, " "),
+    200,
+  ) || "";
+  return { asn, organization };
+}
+
 function sanitizeAnsiTerminalText(value) {
   const sequences = [];
   let text = String(value ?? "")
@@ -1447,12 +1459,12 @@ async function insertReport(env, report, now, expiresAt) {
       const result = await env.DB.prepare(
         `INSERT INTO reports (
           id, created_at, expires_at, tested_at, regions, mode, ip_mode,
-          source_ip_masked,
+          source_ip_masked, source_asn, source_as_organization,
           speed_url, speed_text, speed_data, duration_seconds, target_mbps,
           traffic_rx_bytes, traffic_tx_bytes,
           nq_url, nq_tested_at, nq_time_source, time_gap_seconds, nq_identity_reason,
           bind_status, version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
         now,
@@ -1462,6 +1474,8 @@ async function insertReport(env, report, now, expiresAt) {
         report.mode,
         report.ipMode,
         report.sourceIPMasked,
+        report.sourceAsn,
+        report.sourceAsOrganization,
         report.speedUrl,
         report.speedText,
         report.speedData,
@@ -1654,6 +1668,9 @@ async function createReport(request, env) {
     });
   }
   parsed.value.sourceIPMasked = maskedReportAddress(clientAddress(request));
+  const network = reportSourceNetwork(request.cf?.asn, request.cf?.asOrganization);
+  parsed.value.sourceAsn = network.asn;
+  parsed.value.sourceAsOrganization = network.organization;
   let snapshot = { value: null, text: "" };
   if (VERIFIED_STATUSES.has(parsed.value.bindStatus) && payload.snapshotText) {
     snapshot = validateNodeQualitySnapshot(payload.snapshotText);
@@ -2072,12 +2089,39 @@ function markdownImage(page, prefix = "NodeQuality") {
   return `![${prefix} ${title}](${page.url})`;
 }
 
+function speedReportIntroduction(report, projectUrl) {
+  const network = reportSourceNetwork(report.source_asn, report.source_as_organization);
+  const maskedIP = stripUnsafeTerminalText(report.source_ip_masked || "") || "IP 段未知";
+  const normalizedProjectUrl = normalizeHttpsUrl(projectUrl, 2048);
+  const links = [];
+  if (normalizedProjectUrl) links.push({ label: "GitHub 项目链接", url: normalizedProjectUrl });
+  links.push({ label: "参考项目：Taier 测速", url: "https://github.com/MiaM1ku/taierspeedtest" });
+  return {
+    title: "SpeedQuality —— 分省三网，实测上下行",
+    links,
+    network: [
+      network.asn ? [`AS${network.asn}`, network.organization].filter(Boolean).join(" ") : "",
+      `IP: ${maskedIP}`,
+    ].filter(Boolean).join("    "),
+  };
+}
+
+function renderSpeedReportIntroduction(report, projectUrl) {
+  const intro = speedReportIntroduction(report, projectUrl);
+  const links = intro.links.map((link) =>
+    `<a href="${escapeHtml(link.url)}" rel="noreferrer">${escapeHtml(link.label)}</a>`
+  ).join(' <span aria-hidden="true">|</span> ');
+  return `<div class="sq-report-intro">
+        <h1>${escapeHtml(intro.title)}</h1>
+        <p class="sq-report-links">${links}</p>
+        <p class="sq-report-network">${escapeHtml(intro.network)}</p>
+      </div>`;
+}
+
 function speedReportHeaderText(report, options = {}) {
   const colored = options.colored === true;
   const targetMbps = Number(report.target_mbps);
-  const maskedIP = stripUnsafeTerminalText(report.source_ip_masked || "") || "IP 段未知";
   const reportVersion = boundedText(report.version, 32);
-  const projectUrl = normalizeHttpsUrl(options.projectUrl, 2048);
   const reportUrl = normalizeHttpsUrl(options.reportUrl, 2048);
   let runUrl = "";
   if (reportUrl) {
@@ -2085,18 +2129,17 @@ function speedReportHeaderText(report, options = {}) {
       runUrl = `${new URL(reportUrl).origin}/run`;
     } catch {}
   }
-  const centeredStyled = (parts) => {
-    const plain = parts.map((part) => part.text).join("");
-    return centerIndent(plain) + parts.map((part) => ansiText(part.text, part.code, colored)).join("");
-  };
   const lines = [ansiText("#".repeat(80), "36", colored)];
-  lines.push(centeredStyled([
-    { text: "SpeedQuality 测速报告：", code: "1;37" },
-    { text: maskedIP, code: "1;96" },
-  ]));
-  if (projectUrl) lines.push(centeredStyled([
-    { text: projectUrl, code: "4;36" },
-  ]));
+  if (options.includeIntroduction !== false) {
+    const intro = speedReportIntroduction(report, options.projectUrl);
+    lines.push(ansiText(centerDisplay(intro.title), "1;96", colored));
+    for (const link of intro.links) {
+      const label = `${link.label}：${link.url}`;
+      lines.push(centerIndent(label) + ansiText(`${link.label}：`, "36", colored) +
+        ansiText(link.url, "4;36", colored));
+    }
+    lines.push(ansiText(centerDisplay(intro.network), "37", colored));
+  }
   if (runUrl) lines.push(ansiText(centerDisplay(`bash <(curl -fsSL ${runUrl})`), "36", colored));
   const reportDetails = [
     `报告时间：${formatTime(report.tested_at)}`,
@@ -2296,8 +2339,8 @@ export function renderReport(report, options = {}) {
       : ansiToHtml(report.speed_text);
     const headerOutput = ansiToHtml(speedReportHeaderText(report, {
       colored: true,
+      includeIntroduction: false,
       reportUrl: options.reportUrl,
-      projectUrl: options.promotion?.projectUrl,
     }));
     const trafficOutput = ansiToHtml(trafficReportText(
       hasTraffic,
@@ -2314,6 +2357,7 @@ export function renderReport(report, options = {}) {
         <pre class="ansi-output sq-output">${terminalOutput}</pre>` : "";
     content = `
     <section class="report-pane sq-addon-pane">
+      ${renderSpeedReportIntroduction(report, options.promotion?.projectUrl)}
       ${speedImage}${terminal ? `<div class="sq-terminal-scroll">${terminal}</div>` : (!speedImage ? '<p class="empty-state">测速内容暂不可用。</p>' : "")}
     </section>`;
   } else if (activeEntry?.page) {
@@ -2468,6 +2512,13 @@ export function renderReport(report, options = {}) {
     .notice.warning { border-color:#ffa500; background:var(--warnbg); color:var(--warn); }
     .notice.danger { border-color:var(--danger); background:var(--dangerbg); color:var(--danger); font-weight:650; }
     .report-pane { padding:0; }
+    .sq-report-intro { margin:8px 0 12px; text-align:center; overflow-wrap:anywhere; }
+    .sq-report-intro h1 { color:#75b8a6; font-size:18px; font-weight:600; line-height:1.5; }
+    .sq-report-intro p { margin:4px 0 0; }
+    .sq-report-links { color:var(--muted); font-size:13px; }
+    .sq-report-links a { color:#70a598; }
+    .sq-report-links span { margin-inline:4px; }
+    .sq-report-network { color:var(--muted); font:13px/1.5 Consolas,"Liberation Mono","Courier New",monospace; white-space:pre-wrap; }
     .header-meta { text-align:right; }
     .header-meta p { margin:0; }
     .header-meta a { display:inline-block; margin-top:3px; }

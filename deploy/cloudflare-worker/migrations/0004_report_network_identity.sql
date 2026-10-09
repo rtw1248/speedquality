@@ -1,0 +1,3 @@
+ALTER TABLE reports ADD COLUMN source_asn INTEGER
+  CHECK (source_asn BETWEEN 1 AND 4294967295);
+ALTER TABLE reports ADD COLUMN source_as_organization TEXT NOT NULL DEFAULT '';

@@ -136,8 +136,10 @@ bucket_name = "speedquality-nodequality"
 npx wrangler d1 migrations apply speedquality-results --remote
 ```
 
-当前会依次执行 `0001_results.sql`、`0002_community_node_sessions.sql` 和
-`0003_lease_preparations.sql`。这里的“迁移”是 Cloudflare 对有序建表或改表文件的统一名称，
+当前会依次执行 `0001_results.sql`、`0002_community_node_sessions.sql`、
+`0003_lease_preparations.sql` 和 `0004_report_network_identity.sql`。
+第 4 项为报告增加来源 ASN 和网络名称，升级已有部署时应先执行迁移，再发布 Worker。
+这里的“迁移”是 Cloudflare 对有序建表或改表文件的统一名称，
 不表示已经存在旧数据库；全新数据库也要执行全部迁移。后续升级仍使用这条命令，Wrangler
 只执行尚未应用的文件。
 
@@ -168,6 +170,10 @@ Token 或 Route Key，只转发 API Token，并在 D1 会话中保存私有 Core
 `PROMOTION_TEXT` 为空或未设置时，报告不显示推广位；当前部署默认关闭，待推广 bot 完成后
 再开放。以后配置推广文案时，可通过 `PROMOTION_URL` 添加链接。报告会根据 `GITHUB_OWNER`
 和 `GITHUB_REPO` 另行展示 GitHub 项目地址。
+
+SQ 页顶部展示项目简介、GitHub 和 Taier 参考项目链接，以及测速服务器提交报告时的 ASN、
+网络名称和脱敏 IP。ASN 与网络名称由 Cloudflare 请求元数据提供，不接受客户端自行填写；
+旧报告没有这项记录时只显示已有的脱敏 IP。三种复制格式同步包含这些信息。
 
 公开 Worker 使用 JSON 结构化日志，并把 `request_id` 传给私有 Core。生产排障命令、关联字段
 和脱敏范围见 [`../../docs/observability.md`](../../docs/observability.md)。
