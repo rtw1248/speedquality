@@ -89,13 +89,13 @@ routes = [{ pattern = "sq.yolo2.cc", custom_domain = true }]
 [vars]
 GITHUB_OWNER = "YOUR_GITHUB_USER"
 GITHUB_REPO = "speedquality"
-GITHUB_REF = "v1.0.11"
-PROBE_VERSION = "v1.0.11"
+GITHUB_REF = "v1.0.12"
+PROBE_VERSION = "v1.0.12"
 RESULT_TTL_DAYS = "90"
 DAILY_RESULT_LIMIT = "100"
 DAILY_SESSION_LIMIT = "20"
 NQ_BINDING_ENABLED = "false"
-PROMOTION_TEXT = "SpeedQuality 社区节点计划"
+PROMOTION_TEXT = ""
 LOG_LEVEL = "info"
 # PROMOTION_URL = "https://example.com/promotion"
 
@@ -165,9 +165,9 @@ npx wrangler secret put NODE_CORE_SECRET
 社区注册、`--node` 和 SQ 原生节点调度都依赖 `NODE_CORE`。公开 Worker 不保存节点 API
 Token 或 Route Key，只转发 API Token，并在 D1 会话中保存私有 Core 返回的不透明 Node ID。
 
-`PROMOTION_TEXT` 和 `PROMOTION_URL` 控制报告正文下方的推广位，未设置链接时仍保留推广
-文案。报告会根据 `GITHUB_OWNER` 和 `GITHUB_REPO` 另行展示 GitHub 项目地址，避免把开源
-仓库标成推广内容。
+`PROMOTION_TEXT` 为空或未设置时，报告不显示推广位；当前部署默认关闭，待推广 bot 完成后
+再开放。以后配置推广文案时，可通过 `PROMOTION_URL` 添加链接。报告会根据 `GITHUB_OWNER`
+和 `GITHUB_REPO` 另行展示 GitHub 项目地址。
 
 公开 Worker 使用 JSON 结构化日志，并把 `request_id` 传给私有 Core。生产排障命令、关联字段
 和脱敏范围见 [`../../docs/observability.md`](../../docs/observability.md)。

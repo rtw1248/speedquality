@@ -174,14 +174,14 @@ function reportPromotion(env) {
     ? `https://github.com/${owner}/${repository}`
     : "";
   return {
-    text: configuredText || "SpeedQuality 社区节点计划",
+    text: configuredText,
     url: configuredUrl,
     projectUrl: repositoryUrl,
   };
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.0.11").trim();
+  const version = String(env.PROBE_VERSION || "v1.0.12").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -2338,7 +2338,7 @@ export function renderReport(report, options = {}) {
   }
 
   const activeLabel = activeEntry?.label || "速度质量";
-  const promotionText = boundedText(options.promotion?.text, 120) || "SpeedQuality 社区节点计划";
+  const promotionText = boundedText(options.promotion?.text, 120);
   const promotionUrl = normalizeHttpsUrl(options.promotion?.url, 2048);
   const promotionContent = promotionUrl
     ? `<a href="${escapeHtml(promotionUrl)}" rel="noreferrer">${escapeHtml(promotionText)}</a>`
@@ -2368,8 +2368,9 @@ export function renderReport(report, options = {}) {
     ? `<p class="notice ${noticeClass}"><strong>${escapeHtml(verification)}</strong>　${escapeHtml(notice)}</p>`
     : "";
   const canonicalReportUrl = normalizeHttpsUrl(options.reportUrl, 2048) || reportPath;
-  const promotionHtml = isSpeedPage ? `
-    <aside class="promotion" aria-label="推广"><span class="promotion-label">推广</span>${promotionContent}</aside>
+  const promotionHtml = isSpeedPage && promotionText ? `
+    <aside class="promotion" aria-label="推广"><span class="promotion-label">推广</span>${promotionContent}</aside>` : "";
+  const summaryHtml = isSpeedPage ? `
     <section class="report-summary" aria-label="SpeedQuality 使用统计">
       <p>今日速度检测量：<strong>${todayUses}</strong>；总检测量：<strong>${totalUses}</strong>。感谢使用 SpeedQuality！</p>
       <p>报告链接：<a href="${escapeHtml(canonicalReportUrl)}">${escapeHtml(canonicalReportUrl)}</a></p>
@@ -2524,7 +2525,7 @@ export function renderReport(report, options = {}) {
   ${headerHtml}
   ${copyActionsTop}
   <main class="${isNodeQualityPage ? "nodequality-page" : hasNodeQuality ? "speedquality-addon-page" : "speedquality-standalone-page"}${showTabs ? "" : " single-page-report"}">
-    ${tabsShell}${noticeHtml}${content}${promotionHtml}
+    ${tabsShell}${noticeHtml}${content}${promotionHtml}${summaryHtml}
   </main>
   ${copyActionsBottom}
   ${footerHtml}

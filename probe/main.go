@@ -123,12 +123,13 @@ func printReport(writer io.Writer, report Report) {
 	family := displayFamily(report.Family)
 	fmt.Fprintln(writer)
 	writeColumns(writer, []tableColumn{
-		{family, 12, "right", cyan},
+		{family, 8, "right", cyan},
 		{"延迟", 10, "right", cyan},
 		{"单线程上传", 18, "right", cyan},
 		{"单线程下载", 18, "right", cyan},
 	}, reset)
 	for _, result := range report.Results {
+		carrier := displayCarrier(result)
 		if result.Status != "ok" {
 			latency := "-"
 			download, upload := "失败", "失败"
@@ -148,13 +149,13 @@ func printReport(writer io.Writer, report Report) {
 				}
 			}
 			writeColumns(writer, []tableColumn{
-				{result.Label, 12, "right", cyan},
+				{carrier, 8, "right", cyan},
 				{latency, 10, "right", red},
 				{upload, 18, "right", red},
 				{download, 18, "right", red},
 			}, reset)
 			if !unavailable {
-				fmt.Fprintf(writer, "  %s[失败] %s：%s%s\n", red, result.Label, result.Error, reset)
+				fmt.Fprintf(writer, "  %s[失败] %s：%s%s\n", red, carrier, result.Error, reset)
 			}
 			continue
 		}
@@ -167,11 +168,24 @@ func printReport(writer io.Writer, report Report) {
 			uploadColor = speedColor(result.Single.UploadMbps, report.TargetMbps)
 		}
 		writeColumns(writer, []tableColumn{
-			{result.Label, 12, "right", cyan},
+			{carrier, 8, "right", cyan},
 			{displayLatency(result.Latency), 10, "right", latencyColor(result.Latency)},
 			{upload, 18, "right", uploadColor},
 			{download, 18, "right", downloadColor},
 		}, reset)
+	}
+}
+
+func displayCarrier(result MeasurementResult) string {
+	switch result.Carrier {
+	case "ct":
+		return "电信"
+	case "cu":
+		return "联通"
+	case "cm":
+		return "移动"
+	default:
+		return result.Label
 	}
 }
 

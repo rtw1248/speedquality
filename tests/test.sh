@@ -558,7 +558,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.11" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.0.12" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -632,24 +632,46 @@ test_foreign_ssh_requires_manual_region() {
     fail '境外 SSH 来源在非交互模式下被自动接受'
   fi
   assert_contains "$TEST_DIR/foreign.out" '不在支持的中国省级地区内'
+  assert_contains "$TEST_DIR/foreign.out" '-l/--list-provinces'
   assert_contains "$TEST_DIR/foreign.out" '-p/--province'
+  assert_contains "$TEST_DIR/foreign.out" "查看地区：bash <(curl -fsSL $REPORT_BASE/run) -l"
+  assert_contains "$TEST_DIR/foreign.out" "指定地区：bash <(curl -fsSL $REPORT_BASE/run) -p hb"
   pass '境外 SSH 来源要求手动指定省份'
 }
 
-test_foreign_ssh_interactive_prompt_offers_bsg_fallback() {
+test_unavailable_ssh_exits_before_interactive_prompts() {
   local output="$TEST_DIR/foreign-interactive.out"
-  local command
+  local command source response
   command -v script >/dev/null 2>&1 || fail '缺少伪终端测试命令 script'
-  printf -v command \
-    'env TERM=dumb SPEEDQUALITY_REPORT_BASE=%q SPEEDQUALITY_REPORT_RESPONSE_FILE=%q SPEEDQUALITY_PROBE_BIN=%q SPEEDQUALITY_SESSION_TOKEN=%q SPEEDQUALITY_LEASE_DIR=%q SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 SPEEDQUALITY_SSH_CLIENT_IP=8.8.8.8 SPEEDQUALITY_GEO_RESPONSE_FILE=%q bash %q' \
-    "$REPORT_BASE" "$REPORT_RESPONSE" "$MOCK_PROBE" \
-    'abcdefghijklmnopqrstuvwxyzABCDEFGH12345678' "$LEASE_DIR" "$FOREIGN_GEO" "$RUNNER"
+  printf '%s\n' '{}' > "$TEST_DIR/geo-unrecognized.json"
+  for source in 8.8.8.8 192.168.1.10 invalid; do
+    for response in "$FOREIGN_GEO" "$TEST_DIR/geo-unrecognized.json"; do
+      printf -v command \
+        'env TERM=dumb SPEEDQUALITY_REPORT_BASE=%q SPEEDQUALITY_SSH_CLIENT_IP=%q SPEEDQUALITY_GEO_RESPONSE_FILE=%q bash %q' \
+        "$REPORT_BASE" "$source" "$response" "$RUNNER"
+      if script -qefc "$command" /dev/null </dev/null >"$output" 2>&1; then
+        fail '来源无法定位时仍开始交互测速'
+      fi
+      assert_contains "$output" '-l/--list-provinces'
+      assert_contains "$output" "指定地区：bash <(curl -fsSL $REPORT_BASE/run) -p hb"
+      assert_not_contains "$output" '测速地区 ['
+      assert_not_contains "$output" '测速档位'
+      assert_not_contains "$output" '结果展示'
+      assert_not_contains "$output" '开始运行'
+    done
+  done
 
-  if ! printf 'hb\n\n\n' | script -qefc "$command" /dev/null >"$output" 2>&1; then
-    fail '境外 SSH 来源交互选择测试失败'
+  # A recognized region still allows a correction, but validates it immediately.
+  printf -v command \
+    'env TERM=dumb SPEEDQUALITY_REPORT_BASE=%q SPEEDQUALITY_SSH_CLIENT_IP=8.8.8.8 SPEEDQUALITY_GEO_RESPONSE_FILE=%q bash %q' \
+    "$REPORT_BASE" "$GEO_HUBEI" "$RUNNER"
+  if printf 'sz\n1\n1\n' | script -qefc "$command" /dev/null >"$output" 2>&1; then
+    fail '交互输入无效地区时仍开始测速'
   fi
-  assert_contains "$output" '测速地区 [无默认值，可填 bsg、hb 或 hb,bj，最多 5 个]'
-  pass '境外 SSH 来源的交互提示允许选择退化为北上广三省的 bsg'
+  assert_contains "$output" '不支持的省级地区: sz'
+  assert_not_contains "$output" '测速档位'
+  assert_not_contains "$output" '结果展示'
+  pass '无法定位时直接退出并提示完整命令；交互地区输入在其它选项前校验'
 }
 
 test_verified_nodequality() {
@@ -876,7 +898,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.11|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.0.12|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -890,8 +912,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.11'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.11'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.0.12'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.0.12'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
@@ -941,7 +963,7 @@ test_exact_community_node_route
 test_traffic_estimate_and_measurement
 test_chinese_provinces_and_city_rejection
 test_foreign_ssh_requires_manual_region
-test_foreign_ssh_interactive_prompt_offers_bsg_fallback
+test_unavailable_ssh_exits_before_interactive_prompts
 test_verified_nodequality
 test_disabled_nodequality_binding_falls_back_before_fetch
 test_nodequality_does_not_require_python

@@ -45,7 +45,7 @@ function sampleReport(origin, bindStatus, options = {}) {
     time_gap_seconds: timeGapSeconds,
     nq_identity_reason: linked ? options.identityReason || "masked_ip_and_asn" : "",
     bind_status: bindStatus,
-    version: "1.0.11",
+    version: "1.0.12",
   };
 }
 
@@ -455,7 +455,6 @@ if (process.argv.includes("--build")) {
         reportUrl: `https://sq.example.com/r/${config.id || "AbCdEfGhIjKl"}`,
         snapshot: snapshotFor(config),
         promotion: {
-          text: "SpeedQuality 社区节点计划",
           projectUrl: "https://github.com/rtw1248/speedquality",
         },
         usage: { today: 128, total: 12680 },

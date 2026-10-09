@@ -1219,7 +1219,7 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.doesNotMatch(page, /每方向 5 秒/);
   assert.match(page, /实际流量/);
   assert.doesNotMatch(page, /达标线：|统计口径：/);
-  assert.match(page, /aria-label="推广"/);
+  assert.doesNotMatch(page, /aria-label="推广"|SpeedQuality 社区节点计划/);
   assert.equal((page.match(/>复制文本<\/button>/g) || []).length, 2);
   assert.equal((page.match(/>复制为NodeSeek格式<\/button>/g) || []).length, 2);
   assert.equal((page.match(/>复制为通用Markdown<\/button>/g) || []).length, 2);
@@ -1232,8 +1232,8 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   const bottomCopyActions = page.indexOf('class="copy-actions copy-actions-bottom"');
   assert.ok(topCopyActions < reportContainer);
   assert.ok(reportContainer < speedOutput);
-  assert.ok(speedOutput < page.indexOf('aria-label="推广"'));
-  assert.ok(page.indexOf('aria-label="推广"') < bottomCopyActions);
+  assert.ok(speedOutput < page.indexOf('aria-label="SpeedQuality 使用统计"'));
+  assert.ok(page.indexOf('aria-label="SpeedQuality 使用统计"') < bottomCopyActions);
   assert.match(page, /navigator\.clipboard/);
   assert.match(page, /document\.execCommand\("copy"\)/);
   assert.match(page, /URL\.createObjectURL\(new Blob/);
@@ -1597,7 +1597,7 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
   assert.match(speedPage, />基本信息</);
   assert.match(speedPage, /服务器身份与时间均已校验/);
   assert.match(speedPage, /脱敏 IP 网段与本次测速匹配，且 ASN 一致/);
-  assert.match(speedPage, /aria-label="推广"/);
+  assert.doesNotMatch(speedPage, /aria-label="推广"|SpeedQuality 社区节点计划/);
   assert.match(speedPage, />复制文本<\/button>/);
   assert.match(speedPage, /NodeQuality header/);
   assert.match(speedPage, /今日速度检测量/);

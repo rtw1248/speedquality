@@ -15,11 +15,11 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 		Region: Region{Code: "hb", Name: "湖北"}, Family: "v4", TargetMbps: 200,
 		Results: []MeasurementResult{
 			{
-				Label: "湖北电信", Status: "ok", Latency: 8.25,
+				Carrier: "ct", Label: "湖北电信", Status: "ok", Latency: 8.25,
 				Single: &ModeResult{UploadMbps: 150.5, DownloadMbps: 199.2},
 			},
-			{Label: "湖北联通", Status: "failed", Error: "节点不可用"},
-			{Label: "湖北移动", Status: "failed", Error: "没有可连接的候选节点"},
+			{Carrier: "cu", Label: "湖北联通", Status: "failed", Error: "节点不可用"},
+			{Carrier: "cm", Label: "湖北移动", Status: "failed", Error: "没有可连接的候选节点"},
 		},
 	}
 	var output bytes.Buffer
@@ -42,16 +42,16 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 		t.Fatalf("report headings do not share the IPv4 color: %q", heading)
 	}
 	for _, expected := range []string{
-		"        IPv4        延迟          单线程上传          单线程下载",
-		"    湖北电信         8ms          150.50Mbps           200Mbps ✓",
-		"[失败] 湖北联通：节点不可用",
-		"    湖北移动           -                   -                   -",
+		"    IPv4        延迟          单线程上传          单线程下载",
+		"    电信         8ms          150.50Mbps           200Mbps ✓",
+		"[失败] 联通：节点不可用",
+		"    移动           -                   -                   -",
 	} {
 		if !strings.Contains(plain, expected) {
 			t.Fatalf("plain report lacks %q:\n%s", expected, plain)
 		}
 	}
-	if strings.Contains(plain, "[失败] 湖北移动") || strings.Contains(plain, "没有可连接的候选节点") {
+	if strings.Contains(plain, "[失败] 移动") || strings.Contains(plain, "没有可连接的候选节点") {
 		t.Fatalf("unavailable node should remain a compact table row:\n%s", plain)
 	}
 	if displayWidth("湖北电信") != 8 || displayWidth(padDisplay("湖北电信", 12, "right")) != 12 {
@@ -63,7 +63,7 @@ func TestPrintReportKeepsPartialMeasurementsVisible(t *testing.T) {
 	report := Report{
 		Region: Region{Name: "湖北"}, Family: "v4", TargetMbps: 200,
 		Results: []MeasurementResult{{
-			Label: "湖北电信", Status: "failed", Latency: 20.5,
+			Carrier: "ct", Label: "湖北电信", Status: "failed", Latency: 20.5,
 			Error:  "上传未产生有效数据",
 			Single: &ModeResult{DownloadMbps: 123.45, DownloadBytes: 1_000_000},
 		}},

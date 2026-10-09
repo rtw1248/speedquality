@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.0.11"
-readonly FALLBACK_PROBE_VERSION="v1.0.11"
+readonly SPEEDQUALITY_VERSION="1.0.12"
+readonly FALLBACK_PROBE_VERSION="v1.0.12"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NODEQUALITY_API="https://api.nodequality.com/api/v1"
@@ -114,11 +114,17 @@ die() {
   exit 1
 }
 
-usage() {
-  local run_command="bash run.sh"
+entry_command() {
   if [[ "$REPORT_BASE" != "$REPORT_BASE_PLACEHOLDER" ]] && validate_https_url "$REPORT_BASE"; then
-    run_command="bash <(curl -fsSL ${REPORT_BASE%/}/run)"
+    printf 'bash <(curl -fsSL %s/run)' "${REPORT_BASE%/}"
+  else
+    printf 'bash run.sh'
   fi
+}
+
+usage() {
+  local run_command
+  run_command=$(entry_command)
   cat <<EOF
 SpeedQuality - 服务器分地区测速与 NodeQuality 结果绑定工具
 
@@ -139,9 +145,11 @@ SpeedQuality 选项:
 地区代码:
   bsg SSH 来源省份（已开放公共测速时）+ 北京、上海、广东；否则只测北上广
   多个省份可使用中英文逗号或顿号分隔；单次最多 5 个，完整列表使用 --list-provinces 查看。
+  不传 -p 且无法识别 SSH 来源地区时直接退出；请先用 -l 查看代码，再用 -p 指定。
 
 示例:
   $run_command
+  $run_command -l
   $run_command -p hb -s 200
   $run_command -p '湖北，北京' -s 100 -v4
   $run_command -p hb -s 100 -v6
@@ -422,12 +430,12 @@ detect_auto_region() {
 
   SSH_CLIENT_IP=$(extract_ssh_client_ip || true)
   if [[ -z "$SSH_CLIENT_IP" ]]; then
-    [[ "$quiet" == "quiet" ]] || warn "没有检测到 SSH 客户端 IP；请手动选择地区"
+    [[ "$quiet" == "quiet" ]] || warn "没有检测到 SSH 客户端 IP"
     return 1
   fi
   if private_ip_literal "$SSH_CLIENT_IP"; then
     [[ "$quiet" == "quiet" ]] || \
-      warn "SSH 来源 $SSH_CLIENT_IP 是内网地址，无法自动定位；请手动选择地区"
+      warn "SSH 来源 $SSH_CLIENT_IP 是内网地址，无法自动定位"
     return 1
   fi
 
@@ -439,7 +447,7 @@ detect_auto_region() {
     validate_https_url "$GEO_API" || die "地区检测 API 地址不合法"
     if ! curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --connect-timeout 5 --max-time 15 \
       "${GEO_API%/}/$SSH_CLIENT_IP" -o "$response_file"; then
-      [[ "$quiet" == "quiet" ]] || warn "无法查询 SSH 来源 $SSH_CLIENT_IP 的地区；请手动选择"
+      [[ "$quiet" == "quiet" ]] || warn "无法查询 SSH 来源 $SSH_CLIENT_IP 的地区"
       return 1
     fi
   fi
@@ -453,19 +461,19 @@ detect_auto_region() {
     hk|mo|tw) region_code="$country_code" ;;
     *)
       [[ "$quiet" == "quiet" ]] || \
-        warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内；请手动选择"
+        warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内"
       return 1
       ;;
   esac
   mapped=$(region_code_from_token "$region_code" || true)
   if [[ -z "$mapped" ]]; then
     [[ "$quiet" == "quiet" ]] || \
-      warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内；请手动选择"
+      warn "SSH 来源 $SSH_CLIENT_IP 不在支持的中国省级地区内"
     return 1
   fi
   if ! public_region_supported "$mapped"; then
     [[ "$quiet" == "quiet" ]] || \
-      warn "SSH 来源地区 $(region_name "$mapped") 暂未开放公共测速；请用 -p 选择其他地区"
+      warn "SSH 来源地区 $(region_name "$mapped") 暂未开放公共测速"
     return 1
   fi
   AUTO_REGION_CODE="$mapped"
@@ -493,6 +501,7 @@ interactive_region_selection() {
   IFS= read -r answer || answer=""
   REGION_INPUT="${answer:-$default_region}"
   [[ -n "$REGION_INPUT" ]] || die "无法自动确定地区，请重新运行并使用 -p/--province 指定"
+  normalize_regions "$REGION_INPUT"
 }
 
 interactive_selection() {
@@ -532,6 +541,7 @@ prepare_speed_selection() {
   local should_interact=0
   local should_prompt_region=0
   local bsg_requested=0
+  local run_command
 
   if [[ "${REGION_INPUT,,}" == "auto" ]]; then
     REGION_INPUT=""
@@ -565,6 +575,13 @@ prepare_speed_selection() {
       else
         detect_auto_region || true
       fi
+    fi
+    if [[ -z "$REGION_INPUT" && -z "$AUTO_REGION_CODE" ]]; then
+      run_command=$(entry_command)
+      printf '%s[X]%s 无法自动确定测速地区；请先用 -l/--list-provinces 查看代码，再用 -p/--province 指定。\n' \
+        "$C_RED" "$C_RESET" >&2
+      printf '  查看地区：%s -l\n  指定地区：%s -p hb\n' "$run_command" "$run_command" >&2
+      exit 1
     fi
     if ((should_interact == 1)); then
       interactive_selection
