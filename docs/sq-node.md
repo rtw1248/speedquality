@@ -98,6 +98,57 @@ sq-node --help
 sq-node setup --help
 ```
 
+## 第一次自测
+
+先用自己控制的节点短时测试，设为 `private`；验证成功后再决定是否开放公共调度。
+需要 Linux `amd64/arm64`、root 或 sudo、systemd、可用的 `nft`，以及平台能直接连接的公网地址。
+节点地区和运营商必须与真实信息一致；例如美西服务器可以作为测速请求方，不能登记为湖北节点。
+安装器不自动安装系统依赖或更改 SSH 设置；缺少 `nft` 时应先由提供者按所用发行版安装 nftables。
+
+在**提供测速服务的节点服务器**执行：
+
+```bash
+bash <(curl -fsSL https://sq.yolo2.cc/install-node) --install-only
+sudo sq-node setup --platform https://sq.yolo2.cc \
+  --access private --speed 100 --daily 1GB --total 2GB
+```
+
+向导显示自动检测结果后，核对地区、运营商和公网地址，在云安全组允许 `50000-59999/TCP`，
+再按 Enter 完成注册和启动。主机现有防火墙也不能阻断所有权验证端口或合法租约连接；
+不要清空现有规则，也不要把整个范围直接向公网永久放行。正常测速由网关按来源临时开放端口。
+
+检查服务：
+
+```bash
+sudo sq-node status
+sudo sq-node diagnose
+```
+
+应看到“注册：是”“临时租约网关：就绪”“访问模式：private”，并取得 `Route Key: sqn_...`。
+网关尚未就绪时先看 `sudo sq-node logs 100`，不要只凭注册成功判断测速可用。
+
+在**另一台待测服务器**执行，将示例 Key 换成自己的：
+
+```bash
+bash <(curl -fsSL https://sq.yolo2.cc/run) --node sqn_YOUR_ROUTE_KEY -s 100 -v4
+```
+
+首次显式选择 `100 Mbps`，与节点默认最高档位一致；不传 `-p`，自动使用该节点登记省份。
+这次只测试指定节点对应的运营商。成功标准是出现有效的上传/下载结果和报告链接；节点端
+`status` 中今日总流量增加、测试结束后当前任务归零。双方均具备 IPv6 时，可再用 `-v6` 单独测试。
+
+测试后不继续运行时，在节点服务器执行：
+
+```bash
+sudo sq-node emergency-stop
+```
+
+该命令暂停平台调度并停止节点服务和临时网关。若不再保留注册，按下文“注销与移除服务”处理。
+当前网关仍每秒轮询控制接口；平台尚使用 Cloudflare Workers 时，不应把短时验收直接当作
+免费额度下可长期运行的结论，持续运行前需完成控制通道优化或 VPS 迁移。
+
+## 配置文件
+
 以 root 运行时，配置和状态分别保存在：
 
 ```text
@@ -160,7 +211,7 @@ Route Key: sqn_...
 
 ```bash
 bash <(curl -fsSL https://sq.yolo2.cc/run) \
-  --node sqn_YOUR_ROUTE_KEY -s 200
+  --node sqn_YOUR_ROUTE_KEY -s 100
 ```
 
 未传 `-p` 时自动采用节点登记省份。显式 `-p` 必须恰好是该省份；`bsg` 和多省组合会被

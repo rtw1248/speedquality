@@ -2,6 +2,9 @@
 
 适用于已有 Linux 服务器、希望减少 Cloudflare 用量的运营者。客户端用法、报告链接、社区节点协议不变。该方案需要 Docker Compose v2+、Nginx，以及 Cloudflare 托管的域名。程序使用 Node.js 24.14，包含在 Docker 镜像中，不需要给服务器安装 Node、Python、Redis 或 MySQL。
 
+当前 VPS 版节点缓存仍为进程内的 `MemoryCache`，重启后重建；Redis 持久化替换尚未实现。
+下文部署方案不代表已经接入 Redis，也不代表现有 Cloudflare 生产服务已迁移。
+
 下面的双服务清单供持有私有 Core 的平台维护者使用，私有 Core 不包含在公开仓库中。
 独立开发者可按照 [公开 API 文档](../../docs/api.md) 实现自己的节点服务；公开 Web 入口还支持 `STATIC_NODES` 配置，
 不配置 `CORE_URL` 时可单独运行 `server.mjs`，但不提供官方社区节点调度与注册能力。
