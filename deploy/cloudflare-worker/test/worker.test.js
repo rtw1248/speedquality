@@ -1185,7 +1185,9 @@ test("report copy formats support plain text, NodeSeek, and general Markdown", (
   for (const copy of Object.values(copies)) {
     assert.match(copy, /SpeedQuality 测速报告：/);
     assert.match(copy, /203\.0\.\*\.\*/);
-    assert.match(copy, /\[GitHub 项目链接\]\(https:\/\/github\.com\/owner\/speedquality\)$/);
+    assert.match(copy, /\[NodeQuality链接\]\(https:\/\/nodequality\.com\/r\/IHfGBj2jD8OT7BqBNUbCWTWV3XRIbpMB\)/);
+    assert.match(copy, /\[SpeedQuality链接\]\(https:\/\/sq\.example\.com\/r\/CopyDemo1234\)$/);
+    assert.doesNotMatch(copy, /GitHub 项目链接|github\.com/);
     assert.doesNotMatch(copy, /分省三网|taierspeedtest|AS64500|Example Network/);
   }
 
@@ -1247,7 +1249,9 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
     GITHUB_OWNER: "owner",
     GITHUB_REPO: "speedquality",
   };
-  const response = await submitResult(basicFields(), env);
+  const response = await submitResult(basicFields({
+    tested_at: String(Date.parse("2026-10-09T16:05:09Z") / 1000),
+  }), env);
   assert.equal(response.status, 201);
   const reportUrl = (await response.text()).trim();
   assert.match(reportUrl, /^https:\/\/rtw\.example\/r\/[A-Za-z0-9_-]{12}$/);
@@ -1285,7 +1289,12 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.equal((page.match(/>复制文本<\/button>/g) || []).length, 2);
   assert.equal((page.match(/>复制为NodeSeek格式<\/button>/g) || []).length, 2);
   assert.equal((page.match(/>复制为通用Markdown<\/button>/g) || []).length, 2);
-  assert.equal((page.match(/data-download="SpeedQualityResult\.md"/g) || []).length, 4);
+  const downloadBaseName = `SpeedQuality_20261010-000509_湖北_${id}`;
+  const fileNames = [...page.matchAll(/data-download="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(fileNames, [
+    `${downloadBaseName}_NodeSeek.md`, `${downloadBaseName}_Markdown.md`,
+    `${downloadBaseName}_NodeSeek.md`, `${downloadBaseName}_Markdown.md`,
+  ]);
   assert.equal((page.match(/class="general-md"/g) || []).length, 2);
   assert.equal((page.match(/class="copy-status"/g) || []).length, 1);
   const topCopyActions = page.indexOf('class="copy-actions copy-actions-top"');
@@ -1336,11 +1345,11 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   const buttons = [
     { dataset: { copySource: "copy-report-text" }, textContent: "复制文本" },
     {
-      dataset: { copySource: "copy-report-nodeseek", download: "SpeedQualityResult.md" },
+      dataset: { copySource: "copy-report-nodeseek", download: fileNames[0] },
       textContent: "复制为NodeSeek格式",
     },
     {
-      dataset: { copySource: "copy-report-markdown", download: "SpeedQualityResult.md" },
+      dataset: { copySource: "copy-report-markdown", download: fileNames[1] },
       textContent: "复制为通用Markdown",
     },
   ];
@@ -1404,8 +1413,8 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   await buttons[2].listener();
   assert.deepEqual(copied, ["plain report", ":::: tabs\n::::", "# 速度质量"]);
   assert.deepEqual(downloads.map((download) => download.filename), [
-    "SpeedQualityResult.md",
-    "SpeedQualityResult.md",
+    `${downloadBaseName}_NodeSeek.md`,
+    `${downloadBaseName}_Markdown.md`,
   ]);
   assert.equal(await blobs.get(downloads[0].href).text(), ":::: tabs\n::::");
   assert.equal(await blobs.get(downloads[1].href).text(), "# 速度质量");

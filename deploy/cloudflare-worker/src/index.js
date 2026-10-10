@@ -2120,12 +2120,25 @@ function speedReportHeaderText(report, options = {}) {
   return lines.join("\n");
 }
 
-function reportLinkLines(nodeQualityUrl, reportUrl, projectUrl) {
+function reportLinkLines(nodeQualityUrl, reportUrl) {
   const links = [];
   if (nodeQualityUrl) links.push(`[NodeQuality链接](${nodeQualityUrl})`);
   if (reportUrl) links.push(`[SpeedQuality链接](${reportUrl})`);
-  if (projectUrl) links.push(`[GitHub 项目链接](${projectUrl})`);
   return links.join("\n");
+}
+
+function reportDownloadBaseName(report) {
+  const epoch = parseEpoch(report.tested_at) || parseEpoch(report.created_at);
+  // Use the report's Beijing time so repeated exports keep the same identity.
+  const timestamp = Number.isFinite(epoch)
+    ? new Date((epoch + 8 * 3600) * 1000).toISOString().slice(0, 19)
+      .replace(/[-:]/g, "").replace("T", "-")
+    : "时间未知";
+  const regions = stripUnsafeTerminalText(report.regions)
+    .replace(/[^A-Za-z0-9\u3400-\u9fff]+/g, "-").slice(0, 40)
+    .replace(/^-+|-+$/g, "") || "地区未知";
+  const id = String(report.id || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "report";
+  return `SpeedQuality_${timestamp}_${regions}_${id}`;
 }
 
 export function formatReportCopies(report, options = {}) {
@@ -2161,7 +2174,7 @@ export function formatReportCopies(report, options = {}) {
   const speedPlainMaterial = [headerText, speedText, trafficText].filter(Boolean).join("\n\n");
   const speedAnsiMaterial = [headerAnsi, speedAnsi, trafficAnsiText].filter(Boolean).join("\n\n");
   const nodeQuality = nodeQualityCopyPages(options.snapshot);
-  const links = reportLinkLines(nodeQualityUrl, reportUrl, normalizeHttpsUrl(options.projectUrl));
+  const links = reportLinkLines(nodeQualityUrl, reportUrl);
 
   const plain = [];
   if (hasNodeQuality && nodeQuality.plainText) plain.push(nodeQuality.plainText);
@@ -2279,13 +2292,13 @@ export function renderReport(report, options = {}) {
     snapshot: options.snapshot,
     reportUrl: options.reportUrl,
     reportPath,
-    projectUrl: options.promotion?.projectUrl,
   });
+  const downloadBaseName = reportDownloadBaseName(report);
   const copyActions = (position) => `
       <div class="copy-actions copy-actions-${position}" role="group" aria-label="${position === "top" ? "上方" : "下方"}复制报告">
         <button type="button" data-copy-source="copy-report-text">复制文本</button>
-        <button type="button" data-copy-source="copy-report-nodeseek" data-download="SpeedQualityResult.md">复制为NodeSeek格式</button>
-        <button class="general-md" type="button" data-copy-source="copy-report-markdown" data-download="SpeedQualityResult.md">复制为通用Markdown</button>
+        <button type="button" data-copy-source="copy-report-nodeseek" data-download="${escapeHtml(downloadBaseName)}_NodeSeek.md">复制为NodeSeek格式</button>
+        <button class="general-md" type="button" data-copy-source="copy-report-markdown" data-download="${escapeHtml(downloadBaseName)}_Markdown.md">复制为通用Markdown</button>
       </div>`;
   const copyActionsTop = copyActions("top");
   const copyActionsBottom = copyActions("bottom");
