@@ -3,6 +3,8 @@ import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 export { SQLiteDatabase, applicationSchema, migrationFiles } from "./sqlite.mjs";
 export { MemoryCache, FileSnapshots } from "./storage.mjs";
+export { RedisCache } from "./redis.mjs";
+export { DirectoryCache } from "./directory-cache.mjs";
 export { createHTTPServer, listen, closeServer, scheduleTask } from "./http.mjs";
 
 export function readConfig(defaultFile, argv = process.argv.slice(2)) {

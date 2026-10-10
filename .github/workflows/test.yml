@@ -15,8 +15,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.14.0
+      - name: Install VPS runtime dependencies
+        working-directory: deploy/vps
+        run: npm ci
       - name: Test SQLite, proxy, migration and backup runtime
         run: node --test deploy/vps/test/*.test.mjs
+      - name: Test Redis persistence and outage recovery
+        working-directory: deploy/vps
+        run: npm run test:redis
       - name: Build public VPS image
         run: docker build -f deploy/vps/Dockerfile -t speedquality-platform:test .
   probe:

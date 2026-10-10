@@ -3,10 +3,16 @@
   "version": "1.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.14.0" },
+  "engines": {
+    "node": ">=24.14.0"
+  },
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
+    "test:redis": "SQ_TEST_REDIS_DOCKER=1 node --test test/redis.test.mjs",
     "admin": "node admin.mjs"
+  },
+  "dependencies": {
+    "redis": "6.3.0"
   }
 }

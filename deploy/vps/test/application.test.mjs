@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { join } from "node:path";
 import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, statSync } from "node:fs";
 import { startPublicServer } from "../server.mjs";
-import { initialize, importD1, backupData, restoreData } from "../admin.mjs";
+import { initialize, enableRedis, importD1, backupData, restoreData } from "../admin.mjs";
 import { SQLiteDatabase } from "../lib/sqlite.mjs";
 import { temporary, config, sessionFields, resultFields, migrations, dump } from "./helpers.mjs";
 
@@ -108,8 +108,13 @@ test("init creates private independent secrets and refuses regeneration", (t) =>
   const pub = JSON.parse(readFileSync(join(dir, "public.json"))), core = JSON.parse(readFileSync(join(dir, "core.json")));
   assert.equal(pub.NODE_CORE_SECRET, core.INTERNAL_SECRET);
   assert.notEqual(pub.RATE_LIMIT_SALT, core.NODE_ID_SALT);
+  assert.equal(pub.TASK_SCHEDULER_ENABLED, "true");
   assert.equal(JSON.parse(core.NODE_JWT_PRIVATE_JWK).crv, "P-256");
   assert.equal(statSync(join(dir, "core.json")).mode & 0o777, 0o600);
+  assert.match(core.REDIS_URL, /^redis:\/\/:.+@redis:6379\/0$/);
+  assert.equal(statSync(join(dir, "redis.conf")).mode & 0o777, 0o600);
+  enableRedis({ dir });
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, "core.json"))), core);
   assert.throws(() => initialize({ dir }), /拒绝覆盖/);
 });
 

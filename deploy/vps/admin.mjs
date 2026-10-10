@@ -1,6 +1,6 @@
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import { chmodSync, chownSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync,
-  readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+  readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,63 @@ function inheritOwner(path) {
   }
 }
 
+function atomicPrivateFile(path, text) {
+  const temporary = `${path}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    writeFileSync(temporary, text, { flag: "wx", mode: 0o600 });
+    inheritOwner(temporary);
+    renameSync(temporary, path);
+  } finally { if (existsSync(temporary)) unlinkSync(temporary); }
+}
+
+export function enableRedis(options) {
+  const directory = resolve(options.dir || join(root, "deploy/vps/local"));
+  const path = join(directory, "core.json");
+  const config = JSON.parse(readFileSync(path, "utf8"));
+  const redisConfigPath = join(directory, "redis.conf");
+  let password;
+  if (config.REDIS_URL) {
+    const url = new URL(config.REDIS_URL);
+    if (url.protocol !== "redis:" || url.hostname !== "redis" || url.port !== "6379" || !/^[a-f0-9]{64}$/.test(url.password)) {
+      throw new Error("已有自定义 REDIS_URL，拒绝覆盖；请自行配置 Redis 服务");
+    }
+    password = url.password;
+  } else if (existsSync(redisConfigPath)) {
+    password = readFileSync(redisConfigPath, "utf8").match(/^requirepass ([a-f0-9]{64})$/m)?.[1];
+    if (!password) throw new Error("已有 Redis 配置无效，拒绝覆盖");
+  } else password = randomBytes(32).toString("hex");
+  if (!existsSync(redisConfigPath)) {
+    writeFileSync(redisConfigPath, `bind 0.0.0.0
+protected-mode yes
+port 6379
+requirepass ${password}
+dir /data
+appendonly yes
+appendfsync everysec
+save "900 1"
+maxmemory 128mb
+maxmemory-policy allkeys-lru
+`, { flag: "wx", mode: 0o600 });
+    inheritOwner(redisConfigPath);
+  } else if (!readFileSync(redisConfigPath, "utf8").includes(`requirepass ${password}\n`)) {
+    throw new Error("Redis 凭据不一致；拒绝自动替换");
+  }
+  const data = join(directory, "data/redis");
+  mkdirSync(data, { recursive: true, mode: 0o700 });
+  if (process.getuid?.() === 0) {
+    const owner = statSync(directory); chownSync(data, owner.uid, owner.gid);
+  }
+  if (!config.REDIS_URL) {
+    const backup = join(directory, "core.before-redis.json");
+    if (!existsSync(backup)) { copyFileSync(path, backup, 1); chmodSync(backup, 0o600); inheritOwner(backup); }
+    config.REDIS_URL = `redis://:${password}@redis:6379/0`;
+  }
+  config.DIRECTORY_REFRESH_SECONDS ??= 600;
+  config.DIRECTORY_RETENTION_SECONDS ??= 604800;
+  atomicPrivateFile(path, JSON.stringify(config, null, 2) + "\n");
+  return directory;
+}
+
 export function initialize(options) {
   const directory = resolve(options.dir || join(root, "deploy/vps/local"));
   for (const name of ["public.json", "core.json", "compose.env"]) {
@@ -29,7 +86,7 @@ export function initialize(options) {
   }
   const owner = options["github-owner"] || "rtw1248";
   const repository = options["github-repo"] || "speedquality";
-  const version = options.release || "v1.1.0";
+  const version = options.release || "v1.2.0";
   if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repository) || !/^v\d+\.\d+\.\d+$/.test(version)) {
     throw new Error("无效的 GitHub 仓库或版本");
   }
@@ -52,6 +109,7 @@ export function initialize(options) {
     PROXY_SECRET: secret(), NODE_CORE_SECRET: internalSecret, RATE_LIMIT_SALT: secret(),
     GITHUB_OWNER: owner, GITHUB_REPO: repository, GITHUB_REF: version, PROBE_VERSION: version,
     RESULT_TTL_DAYS: "90", DAILY_RESULT_LIMIT: "100", DAILY_SESSION_LIMIT: "20", NQ_BINDING_ENABLED: "true",
+    TASK_SCHEDULER_ENABLED: "true",
     PROMOTION_TEXT: "", PROMOTION_URL: "" };
   const coreConfig = { ...common, PORT: 52801, INTERNAL_SECRET: internalSecret,
     NODE_ID_SALT: secret(), NODE_CREDENTIAL_SALT: secret(), NODE_JWT_PRIVATE_JWK: JSON.stringify(signingKey),
@@ -69,6 +127,7 @@ export function initialize(options) {
   }).join("\n") + "\n";
   writeFileSync(join(directory, "compose.env"), text, { flag: "wx", mode: 0o600 });
   inheritOwner(join(directory, "compose.env"));
+  enableRedis({ dir: directory });
   return { directory, publicData, coreData };
 }
 
@@ -232,17 +291,20 @@ if (isMain(import.meta.url)) {
     const [command, ...argv] = process.argv.slice(2);
     if (!command || command === "--help") {
       console.log(`SpeedQuality VPS 管理工具（Node.js 24）
-  init --dir DIR --origin https://sq.example --core-dir PRIVATE_REPO [--release v1.1.0]
+  init --dir DIR --origin https://sq.example --core-dir PRIVATE_REPO [--release v1.2.0]
+  enable-redis --dir EXISTING_STATE_DIR
   import-d1 --input export.sql --output NEW.sqlite [--migrations DIR]
   import-snapshots --input DIR --output DIR
   backup --public-dir DIR --core-dir DIR --output NEW_BACKUP_DIR
   restore --input BACKUP_DIR --public-dir EMPTY_DIR --core-dir EMPTY_DIR
 
-init 生成私有配置，不覆盖已有密钥。迁移前必须保留原平台密钥。
+init 自动配置 Redis；enable-redis 为旧部署补充缓存配置，保留原平台密钥。
+初始化不覆盖已有密钥。迁移前必须保留原平台密钥。
 backup 使用 SQLite 在线备份；密钥配置需另外加密备份。restore 只写入空目录。`);
     } else {
       const options = argumentsFor(argv);
       if (command === "init") console.log("配置已生成:", initialize(options).directory);
+      else if (command === "enable-redis") console.log("Redis 配置已准备:", enableRedis(options));
       else if (command === "import-d1") console.log("已校验并导入:", importD1(options));
       else if (command === "import-snapshots") console.log("已导入快照数:", importSnapshots(options));
       else if (command === "backup") {

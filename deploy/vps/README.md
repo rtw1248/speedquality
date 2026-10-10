@@ -1,11 +1,12 @@
-# VPS 部署（v1.1）
+# VPS 部署（Redis 持久化缓存）
 
-适用于已有 Linux 服务器、希望减少 Cloudflare 用量的运营者。客户端用法、报告链接、社区节点协议不变。该方案需要 Docker Compose v2+、Nginx，以及 Cloudflare 托管的域名。程序使用 Node.js 24.14，包含在 Docker 镜像中，不需要给服务器安装 Node、Python、Redis 或 MySQL。
+适用于已有 Linux 服务器、希望减少 Cloudflare 用量的运营者。客户端用法、报告链接、社区节点协议不变。该方案需要 Docker Compose v2+、Nginx，以及 Cloudflare 托管的域名。程序使用 Node.js 24.14，包含在 Docker 镜像中，Node 和 Redis 都由 Compose 容器提供，无需在宿主机单独安装，也不需要 MySQL。
 
-当前 VPS 版节点缓存仍为进程内的 `MemoryCache`，重启后重建；Redis 持久化替换尚未实现。
-下文部署方案不代表已经接入 Redis，也不代表现有 Cloudflare 生产服务已迁移。
+当前 VPS Core 使用 Redis 保存节点目录，AOF 每秒落盘；进程或服务器重启后可恢复缓存。
+部署到 VPS 与切换线上入口是两步；完成第 7 节迁移之前，原 Worker 仍会使用原有 KV/D1/R2。
+测速用户继续运行 `/run`；共享节点提供者继续运行 `/install-node`，均无需安装 Redis。
 
-下面的双服务清单供持有私有 Core 的平台维护者使用，私有 Core 不包含在公开仓库中。
+下面的 Web、Core、Redis 三服务清单供持有私有 Core 的平台维护者使用，私有 Core 不包含在公开仓库中。
 独立开发者可按照 [公开 API 文档](../../docs/api.md) 实现自己的节点服务；公开 Web 入口还支持 `STATIC_NODES` 配置，
 不配置 `CORE_URL` 时可单独运行 `server.mjs`，但不提供官方社区节点调度与注册能力。
 
@@ -19,7 +20,7 @@
                                ├─ NQ 压缩快照
                                └─ 私有 Core :52801
                                   ├─ core.sqlite
-                                  └─ 内存节点缓存
+                                  └─ Redis 节点目录缓存（AOF 持久化）
 
 用户 ───────────测速流量────────────▶ 测速节点
 ```
@@ -41,12 +42,13 @@ Cloudflare 只承担 DNS、HTTPS 和缓存，不再为每次 API 请求执行 Wo
 
 ```text
 /opt/speedquality/
-  releases/v1.1.0/
+  releases/vps-redis/
     public/                 公开代码
     core/                   私有代码
   state/
     public.json             Web 私有配置
-    core.json               Core 私有配置
+    core.json               Core 私有配置（含 Redis 认证）
+    redis.conf              Redis 私有配置
     compose.env             路径、容器 UID/GID
     data/public/
       reports.sqlite        报告、会话、访问限额
@@ -54,10 +56,11 @@ Cloudflare 只承担 DNS、HTTPS 和缓存，不再为每次 API 请求执行 Wo
       assets/               可删除并重新下载的发行包缓存
     data/core/
       core.sqlite           社区节点、凭据哈希、额度、租约
+    data/redis/             Redis AOF 与快照
   backups/                  本机恢复副本
 ```
 
-`state/` 与版本目录分开。默认每个容器最多使用 1 CPU、1 GiB 内存，整个 SQ 的容器上限是 2 CPU、2 GiB；这是配置上限，不是平时必然占用。SQLite 使用 WAL、事务、5 秒锁等待。先使用每种服务一个进程，禁止把 SQLite 放在 NFS/共享网络盘上。
+`state/` 与版本目录分开。Web 和 Core 默认各最多使用 1 CPU、1 GiB 内存，Redis 额外限制 0.5 CPU、384 MiB（缓存数据上限 128 MiB）；整个 SQ 的容器上限是 2.5 CPU、2.375 GiB；这是配置上限，不是平时必然占用。SQLite 使用 WAL、事务、5 秒锁等待。先使用每种服务一个进程，禁止把 SQLite 放在 NFS/共享网络盘上。
 
 ## 2. 先检查服务器
 
@@ -76,32 +79,32 @@ ss -lnt
 
 ## 3. 上传发布代码并构建
 
-在开发电脑执行（两个仓库需已提交相应版本）：
+在开发电脑执行（两个仓库需已提交并更新到包含 Redis 支持的版本）：
 
 ```bash
 export SQ_SSH=你的服务器别名
-export SQ_RELEASE=v1.1.0
+export SQ_RELEASE=vps-redis
 export SQ_ROOT=/home/demo/project/tool/speedquality
 export SQ_CORE=/home/demo/project/tool/speedquality-node-core
 ssh "$SQ_SSH" "install -d /opt/speedquality/releases/$SQ_RELEASE/public /opt/speedquality/releases/$SQ_RELEASE/core"
-git -C "$SQ_ROOT" archive "$SQ_RELEASE" | ssh "$SQ_SSH" "tar -xf - -C /opt/speedquality/releases/$SQ_RELEASE/public"
+git -C "$SQ_ROOT" archive HEAD | ssh "$SQ_SSH" "tar -xf - -C /opt/speedquality/releases/$SQ_RELEASE/public"
 git -C "$SQ_CORE" archive HEAD | ssh "$SQ_SSH" "tar -xf - -C /opt/speedquality/releases/$SQ_RELEASE/core"
 ```
 
-记录私有仓库的 `git rev-parse HEAD`，之后更新时使用确定的提交。`git archive` 不包含本机密钥、Git 认证和依赖目录。
+记录两个仓库的 `git rev-parse HEAD`，之后更新时使用确定的提交。`git archive` 不包含本机密钥、Git 认证和依赖目录。
 
 然后在 VPS 上执行：
 
 ```bash
-cd /opt/speedquality/releases/v1.1.0/public
-docker build -f deploy/vps/Dockerfile -t speedquality-platform:1.1.0 .
+cd /opt/speedquality/releases/vps-redis/public
+docker build -f deploy/vps/Dockerfile -t speedquality-platform:1.2.0-redis .
 docker run --rm --user 0:0 \
   -v /opt/speedquality:/opt/speedquality \
-  speedquality-platform:1.1.0 node /app/deploy/vps/admin.mjs init \
+  speedquality-platform:1.2.0-redis node /app/deploy/vps/admin.mjs init \
   --dir /opt/speedquality/state \
   --origin https://sq.example.com \
-  --core-dir /opt/speedquality/releases/v1.1.0/core \
-  --github-owner 你的GitHub账号 --release v1.1.0
+  --core-dir /opt/speedquality/releases/vps-redis/core \
+  --github-owner 你的GitHub账号 --release v1.2.0
 ```
 
 `init` 自动生成相互独立的凭据，配置权限为 0600；root 执行时默认分配给容器 UID/GID 10001。重复运行会拒绝覆盖。配置可编辑，修改后重启服务生效。`compose.env` 的 UID/GID 必须与数据和配置所有者一致；Core 代码需对该 UID 可读。
@@ -111,13 +114,13 @@ docker run --rm --user 0:0 \
 ## 4. 启动与检查
 
 ```bash
-cd /opt/speedquality/releases/v1.1.0/public
+cd /opt/speedquality/releases/vps-redis/public
 docker compose --env-file /opt/speedquality/state/compose.env -f deploy/vps/compose.yaml up -d
 docker compose --env-file /opt/speedquality/state/compose.env -f deploy/vps/compose.yaml ps
 curl -fsS http://127.0.0.1:52800/health
 ```
 
-应看到两个容器 `healthy`，健康接口返回 `ok`。健康接口用于本机检查；其他 API 必须经过持有代理密钥的 Nginx。直接 curl 本地业务接口返回 403 是预期行为。
+应看到 Web、Core、Redis 三个容器 `healthy`，健康接口返回 `ok`。健康接口用于本机检查；其他 API 必须经过持有代理密钥的 Nginx。直接 curl 本地业务接口返回 403 是预期行为。
 
 常用配置：
 
@@ -126,12 +129,50 @@ curl -fsS http://127.0.0.1:52800/health
 | `ORIGIN` | 对外 HTTPS 域名；生成的报告链接使用它 |
 | `PROBE_VERSION`、`GITHUB_REF` | 已发布且签名完成的版本，不能填尚未发布的标签 |
 | `NQ_BINDING_ENABLED` | `true`，开启 NQ 关联 |
+| `TASK_SCHEDULER_ENABLED` | `true`，启用 Core 逐任务预约与排队；旧 VPS 升级时也需补上 |
 | `RESULT_TTL_DAYS` | 90 天，过期报告和快照自动清理 |
 | `DAILY_SESSION_LIMIT` | 同一来源每天 20 次新会话 |
 | `GEOIP_URL` | 默认 `https://ipwho.is/{ip}`，识别客户端地区/ASN；结果缓存 6 小时 |
 | `MAINTENANCE_MODE` | 空字符串正常服务；`drain` 停止新会话/注册；`readonly` 拒绝写入 |
 
-第三方 GeoIP 有自己的使用限制，失败时显示未知，不能凭空填省份。上游目录可达性也需要从 VPS 实际验证。节点缓存上限 32 MiB / 5000 条，IP 信息缓存上限 8 MiB / 10000 条，丢失缓存可以重建。报告和社区节点登记不能丢失，必须备份 SQLite。
+第三方 GeoIP 有自己的使用限制，失败时显示未知，不能凭空填省份。上游目录可达性也需要从 VPS 实际验证。Redis 缓存上限 128 MiB；Web 的 IP 信息仍为上限 8 MiB / 10000 条的内存缓存，丢失后可重查。报告和社区节点登记不能丢失，必须备份 SQLite。
+
+### 旧 VPS 部署接入 Redis
+
+在包含本次代码的公开目录构建上述新镜像，再执行一次：
+
+```bash
+docker run --rm --user 0:0 \
+  -v /opt/speedquality/state:/opt/speedquality/state \
+  speedquality-platform:1.2.0-redis node /app/deploy/vps/admin.mjs enable-redis \
+  --dir /opt/speedquality/state
+```
+
+该命令生成 Redis 认证、`redis.conf` 和 `data/redis/`，原平台密钥保持不变。
+首次修改前保留 `core.before-redis.json`；重复运行不轮换密码。随后更新 `compose.env` 的
+Core 代码路径，以及 `public.json` 的 `GITHUB_REF`、`PROBE_VERSION`（当前 `v1.2.0`）与
+`TASK_SCHEDULER_ENABLED: "true"`，用新版本 Compose 执行 `up -d`。
+Redis 没有发布宿主机端口，禁止开放公网 6379。
+
+### 缓存保留与刷新
+
+- `DIRECTORY_REFRESH_SECONDS=600`：目录每 10 分钟在下次访问时同步核查上游，不扫描无人使用的目录。
+- `DIRECTORY_RETENTION_SECONDS=604800`：成功目录副本最多保留 7 天。命中可以续保留期，续期写入最多约每小时一次；上次核查时间不随命中改变。
+- 上游确认返回空目录也会替换旧列表，空列表仅缓存 60 秒。上游故障时可短时使用最近成功副本；超过 7 天未核查的副本不能使用。
+- Redis 中目录正文只在变化时替换；成功核查仍更新核查时间和过期信息。源 IP 摘要、省份、运营商、IP 类型继续隔离，不把上游按来源返回的列表混用。
+- Redis 故障时最多使用 60 秒的有限应急内存缓存；相同目录请求合并，上游同时刷新最多 4 个、在途及待处理合计最多 32 个，排队等待最多 5 秒；失败后同一目录等待 60 秒再试。
+- Redis AOF 每秒落盘；突然掉电最多可能丢失约一秒的缓存写入，可以重新获取。并发、队列、额度、凭据和 JWT 有效期不存入这份缓存，也不因缓存延期而延长。
+- 地区验证、连接和激活检查仍执行，缓存命中不代表节点一定可用。
+
+检查命令：
+
+```bash
+docker compose --env-file /opt/speedquality/state/compose.env -f deploy/vps/compose.yaml ps
+docker compose --env-file /opt/speedquality/state/compose.env -f deploy/vps/compose.yaml logs --tail 50 redis core
+```
+
+Core 的 `cache.redis` 日志显示 `ready` 或 `unavailable`，`directory.stale_used` 表示上游刷新失败后使用旧目录。日志不输出 Redis URL、密码或缓存键。
+Redis 的本机持久化不能代替 SQLite、报告快照和密钥的异机备份；Redis 缓存无需从 Cloudflare KV 搬运，可在新环境重新获取。
 
 ## 5. HTTPS 和 Nginx
 
@@ -145,7 +186,7 @@ Origin CA 证书供 Cloudflare 验证源站使用，直接用浏览器访问源�
 docker run --rm --user 0:0 \
   -v /opt/speedquality/state:/config:ro \
   -v /etc/nginx/sites-available:/output \
-  speedquality-platform:1.1.0 node /app/deploy/vps/nginx.mjs \
+  speedquality-platform:1.2.0-redis node /app/deploy/vps/nginx.mjs \
   --config /config/public.json --output /output/speedquality \
   --cert /etc/speedquality/tls/origin.pem --key /etc/speedquality/tls/origin.key
 ln -s /etc/nginx/sites-available/speedquality /etc/nginx/sites-enabled/speedquality
@@ -196,7 +237,7 @@ node deploy/vps/export-cloudflare.mjs --output deploy/vps/local/rehearsal
 2. 查询 D1：`SELECT COUNT(*) FROM sessions WHERE completed_at IS NULL AND expires_at > unixepoch();`。等到 0，最长需等现有会话过期，不能导出后继续接受旧库写入。
 3. 公共 Worker 切到 `readonly`；暂时禁用两个 Worker 的定时触发器，等待在途请求完成。已有社区节点会暂时无法心跳/取租约，应尽量缩短这一阶段。
 4. 再导出到一个全新目录，保留演练结果用于对比。传到 VPS；停止 SQ 两个容器，替换为新目录的数据，通过修改 `compose.env` 指向新目录。不要覆盖打开的 SQLite，不要只复制运行中的 `.sqlite` 主文件。
-5. 校验报告数量、抽查已有链接，核对所有密钥/盐。VPS 仍保持 `readonly`，启动两个容器。
+5. 校验报告数量、抽查已有链接，核对所有密钥/盐。VPS 仍保持 `readonly`，启动三个容器。
 6. 移除 Worker 自定义域名、添加橙云 A 记录。确认公开 `/health`、旧报告、`/run` 已由 VPS 正常提供。确认 HTTPS 严格模式。
 7. 清空 VPS 两个配置的 `MAINTENANCE_MODE`，重启 SQ 容器，恢复新会话；社区节点重新心跳即可恢复调度。
 
@@ -214,7 +255,7 @@ node deploy/vps/export-cloudflare.mjs --output deploy/vps/local/rehearsal
 export SQ_BACKUP=/opt/speedquality/backups/$(date -u +%Y%m%dT%H%M%SZ)
 docker run --rm --user 0:0 \
   -v /opt/speedquality:/opt/speedquality \
-  speedquality-platform:1.1.0 node /app/deploy/vps/admin.mjs backup \
+  speedquality-platform:1.2.0-redis node /app/deploy/vps/admin.mjs backup \
   --public-dir /opt/speedquality/state/data/public \
   --core-dir /opt/speedquality/state/data/core --output "$SQ_BACKUP"
 ```
@@ -224,7 +265,7 @@ docker run --rm --user 0:0 \
 使用上述默认数据目录时，可以安装每日定时备份：
 
 ```bash
-ln -s /opt/speedquality/releases/v1.1.0 /opt/speedquality/current
+ln -s /opt/speedquality/releases/vps-redis /opt/speedquality/current
 cp deploy/vps/speedquality-backup.service deploy/vps/speedquality-backup.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now speedquality-backup.timer
@@ -247,6 +288,7 @@ docker compose --env-file /opt/speedquality/state/compose.env -f deploy/vps/comp
 docker compose --env-file /opt/speedquality/state/compose.env -f deploy/vps/compose.yaml logs --tail=100 web core
 docker stats --no-stream
 df -h /opt/speedquality
+docker exec speedquality-vps-core-1 node /core/scripts/scheduler-status.mjs --config /config/core.json
 ```
 
 Docker 日志每个容器最多 3 × 10 MiB；Nginx 日志沿用系统 logrotate。优先关注健康状态、5xx/429、响应耗时、磁盘余量、备份成功与证书到期。每小时清理过期报告，每 5 分钟维护 Core 健康状态；定时任务不重叠。数据库事务容量限制由 SQLite 执行，不能用内存缓存代替额度计数。
