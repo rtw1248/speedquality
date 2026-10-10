@@ -726,6 +726,22 @@ function randomId() {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
+function randomReportId() {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = new Uint8Array(16);
+  let id = "";
+  while (id.length < 12) {
+    crypto.getRandomValues(bytes);
+    for (const byte of bytes) {
+      // 248 is divisible by 62: rejecting the tail avoids modulo bias.
+      if (byte >= 248) continue;
+      id += alphabet[byte % alphabet.length];
+      if (id.length === 12) break;
+    }
+  }
+  return id;
+}
+
 async function clientHash(request, env) {
   const forwarded = clientAddress(request);
   const salt = String(env.RATE_LIMIT_SALT || "speedquality-local");
@@ -1526,7 +1542,7 @@ async function enforceDailyLimit(request, env, now) {
 
 async function insertReport(env, report, now, expiresAt) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const id = randomId();
+    const id = randomReportId();
     try {
       const result = await env.DB.prepare(
         `INSERT INTO reports (
@@ -2511,11 +2527,11 @@ export function renderReport(report, options = {}) {
         // Timestamp each click in Beijing time, including repeated clicks in one millisecond.
         lastExportAt = Math.max(Date.now(), lastExportAt + 1);
         const timestamp = new Date(lastExportAt + 8 * 3600 * 1000).toISOString()
-          .replaceAll("-", "").replaceAll(":", "").replace("T", "-").replace(".", "-").replace("Z", "");
+          .replace(/[^0-9]/g, "");
         const link = document.createElement("a");
         const objectUrl = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
         link.href = objectUrl;
-        link.download = filename.slice(0, -3) + "_导出" + timestamp + ".md";
+        link.download = filename.slice(0, -3) + "_" + timestamp + ".md";
         document.body.append(link);
         link.click();
         link.remove();

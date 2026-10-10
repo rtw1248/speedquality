@@ -1339,7 +1339,7 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   }), env);
   assert.equal(response.status, 201);
   const reportUrl = (await response.text()).trim();
-  assert.match(reportUrl, /^https:\/\/rtw\.example\/r\/[A-Za-z0-9_-]{12}$/);
+  assert.match(reportUrl, /^https:\/\/rtw\.example\/r\/[A-Za-z0-9]{12}$/);
 
   const id = reportUrl.split("/").pop();
   const saved = DB.reports.get(id);
@@ -1503,15 +1503,25 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   await buttons[2].listener();
   assert.deepEqual(copied, ["plain report", ":::: tabs\n::::", "# 速度质量"]);
   assert.deepEqual(downloads.map((download) => download.filename), [
-    `${downloadBaseName}_NodeSeek_导出20261011-000509-123.md`,
-    `${downloadBaseName}_Markdown_导出20261011-000509-124.md`,
+    `${downloadBaseName}_NodeSeek_20261011000509123.md`,
+    `${downloadBaseName}_Markdown_20261011000509124.md`,
   ]);
   assert.equal(await blobs.get(downloads[0].href).text(), ":::: tabs\n::::");
   assert.equal(await blobs.get(downloads[1].href).text(), "# 速度质量");
   exportNow += 2000;
   await buttons[1].listener();
-  assert.equal(downloads[2].filename, `${downloadBaseName}_NodeSeek_导出20261011-000511-123.md`);
+  assert.equal(downloads[2].filename, `${downloadBaseName}_NodeSeek_20261011000511123.md`);
   assert.equal(await blobs.get(downloads[2].href).text(), ":::: tabs\n::::");
+
+  // Existing shared links and their full IDs must survive the generator change.
+  for (const legacyID of ["AtFndd9_BFJU", "N-C3o7Ysaaj9"]) {
+    DB.reports.set(legacyID, { ...saved, id: legacyID, regions: "湖北、北京,上海，广东、内蒙古" });
+    const legacyResponse = await worker.fetch(new Request(`https://rtw.example/r/${legacyID}`), env);
+    assert.equal(legacyResponse.status, 200);
+    const legacyPage = await legacyResponse.text();
+    assert.ok(legacyPage.includes(`data-download="SpeedQuality_湖北-北京-上海-广东-内蒙古_${legacyID}_NodeSeek.md"`));
+    assert.ok(legacyPage.includes(`https://rtw.example/r/${legacyID}`));
+  }
 });
 
 test("successful reports increment daily and total usage counters", async () => {
