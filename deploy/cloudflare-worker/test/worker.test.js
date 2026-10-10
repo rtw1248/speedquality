@@ -1289,7 +1289,7 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.equal((page.match(/>复制文本<\/button>/g) || []).length, 2);
   assert.equal((page.match(/>复制为NodeSeek格式<\/button>/g) || []).length, 2);
   assert.equal((page.match(/>复制为通用Markdown<\/button>/g) || []).length, 2);
-  const downloadBaseName = `SpeedQuality_20261010-000509_湖北_${id}`;
+  const downloadBaseName = `SpeedQuality_湖北_${id}`;
   const fileNames = [...page.matchAll(/data-download="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(fileNames, [
     `${downloadBaseName}_NodeSeek.md`, `${downloadBaseName}_Markdown.md`,
@@ -1396,8 +1396,13 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
     },
     revokeObjectURL() {},
   };
+  let exportNow = Date.parse("2026-10-10T16:05:09.123Z");
+  class ExportDate extends Date {
+    static now() { return exportNow; }
+  }
   runInNewContext(script, {
     Blob,
+    Date: ExportDate,
     URL: objectUrl,
     clearTimeout() {},
     document,
@@ -1413,11 +1418,15 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   await buttons[2].listener();
   assert.deepEqual(copied, ["plain report", ":::: tabs\n::::", "# 速度质量"]);
   assert.deepEqual(downloads.map((download) => download.filename), [
-    `${downloadBaseName}_NodeSeek.md`,
-    `${downloadBaseName}_Markdown.md`,
+    `${downloadBaseName}_NodeSeek_导出20261011-000509-123.md`,
+    `${downloadBaseName}_Markdown_导出20261011-000509-124.md`,
   ]);
   assert.equal(await blobs.get(downloads[0].href).text(), ":::: tabs\n::::");
   assert.equal(await blobs.get(downloads[1].href).text(), "# 速度质量");
+  exportNow += 2000;
+  await buttons[1].listener();
+  assert.equal(downloads[2].filename, `${downloadBaseName}_NodeSeek_导出20261011-000511-123.md`);
+  assert.equal(await blobs.get(downloads[2].href).text(), ":::: tabs\n::::");
 });
 
 test("successful reports increment daily and total usage counters", async () => {

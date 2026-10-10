@@ -2128,17 +2128,11 @@ function reportLinkLines(nodeQualityUrl, reportUrl) {
 }
 
 function reportDownloadBaseName(report) {
-  const epoch = parseEpoch(report.tested_at) || parseEpoch(report.created_at);
-  // Use the report's Beijing time so repeated exports keep the same identity.
-  const timestamp = Number.isFinite(epoch)
-    ? new Date((epoch + 8 * 3600) * 1000).toISOString().slice(0, 19)
-      .replace(/[-:]/g, "").replace("T", "-")
-    : "时间未知";
   const regions = stripUnsafeTerminalText(report.regions)
     .replace(/[^A-Za-z0-9\u3400-\u9fff]+/g, "-").slice(0, 40)
     .replace(/^-+|-+$/g, "") || "地区未知";
   const id = String(report.id || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "report";
-  return `SpeedQuality_${timestamp}_${regions}_${id}`;
+  return `SpeedQuality_${regions}_${id}`;
 }
 
 export function formatReportCopies(report, options = {}) {
@@ -2435,11 +2429,16 @@ export function renderReport(report, options = {}) {
         }
         fallbackCopy(text);
       };
+      let lastExportAt = 0;
       const download = (text, filename) => {
+        // Timestamp each click in Beijing time, including repeated clicks in one millisecond.
+        lastExportAt = Math.max(Date.now(), lastExportAt + 1);
+        const timestamp = new Date(lastExportAt + 8 * 3600 * 1000).toISOString()
+          .replaceAll("-", "").replaceAll(":", "").replace("T", "-").replace(".", "-").replace("Z", "");
         const link = document.createElement("a");
         const objectUrl = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
         link.href = objectUrl;
-        link.download = filename;
+        link.download = filename.slice(0, -3) + "_导出" + timestamp + ".md";
         document.body.append(link);
         link.click();
         link.remove();
