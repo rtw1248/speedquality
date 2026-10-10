@@ -384,6 +384,7 @@ class FakeNodeCore {
   constructor() {
     this.leases = [];
     this.feedback = [];
+    this.tasks = [];
     this.community = [];
     this.routeKey = `sqn_${"r".repeat(32)}`;
     this.nodeID = "fedcba9876543210fedcba9876543210";
@@ -394,6 +395,15 @@ class FakeNodeCore {
   async fetch(request) {
     const url = new URL(request.url);
     const body = await request.json();
+    if (url.pathname === "/task") {
+      this.tasks.push(body);
+      if (body.action !== "acquire") return Response.json({ released: true, retry: false });
+      if (this.taskWaiting) return Response.json({ status: "waiting", reason: "node_capacity_exhausted" }, { status: 202 });
+      const lease = coreLease(body);
+      lease.lease_id = `task_${"b".repeat(40)}_1`;
+      lease.targets[0].carrier = body.carrier;
+      return Response.json(lease);
+    }
     if (url.pathname === "/lease") {
       this.leases.push(body);
       return Response.json(coreLease(body));
@@ -621,6 +631,60 @@ test("session is source-bound and obtains a lease through the private binding", 
 
   const wrongSource = await worker.fetch(leaseRequest(token, {}, "203.0.113.10"), env);
   assert.equal(wrongSource.status, 401);
+});
+
+test("managed node tasks authenticate their source and preserve queue and release semantics", async () => {
+  const DB = new FakeD1();
+  const NODE_CORE = new FakeNodeCore();
+  const env = { DB, NODE_CORE, RATE_LIMIT_SALT: "test-salt", NODE_CORE_SECRET: "core-secret", TASK_SCHEDULER_ENABLED: "true" };
+  const session = await worker.fetch(sessionRequest(), env);
+  assert.equal(session.headers.get("x-sq-task-scheduler"), "1");
+  const token = (await session.text()).trim();
+  const send = (values = {}, ip = "203.0.113.9") => worker.fetch(new Request("https://rtw.example/api/node-task", {
+    method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": ip, authorization: `Bearer ${token}` },
+    body: JSON.stringify({ region: "hb", family: "v4", carrier: "ct", action: "acquire", ...values }),
+  }), env);
+  assert.equal((await send({}, "203.0.113.10")).status, 401);
+  assert.equal((await send({ region: "bj" })).status, 400);
+  assert.equal((await send({ family: "v6" })).status, 400);
+  assert.equal((await send({ carrier: "edu" })).status, 400);
+  const response = await send({ source_id: "forged", session_id: "forged", target_mbps: 400 });
+  assert.equal(response.status, 200);
+  const lease = await response.json();
+  assert.equal(NODE_CORE.tasks[0].target_mbps, 200);
+  assert.match(NODE_CORE.tasks[0].session_id, /^[a-f0-9]{64}$/);
+  assert.match(NODE_CORE.tasks[0].source_id, /^[a-f0-9]{32}$/);
+  NODE_CORE.taskWaiting = true;
+  const queued = await send({ wait: true });
+  assert.equal(queued.status, 202);
+  assert.equal(queued.headers.get("retry-after"), "2");
+  assert.equal((await queued.json()).status, "waiting");
+  const finished = await send({ action: "finish", lease_id: lease.lease_id, retry: true,
+    measurement: { carrier: "ct", label: "湖北电信", node_id: lease.targets[0].candidates[0].id, status: "failed", error: "节点不可用" },
+  });
+  assert.equal(finished.status, 200);
+  assert.equal((await finished.json()).released, true);
+  assert.equal((await send({ action: "finish", lease_id: lease.lease_id, measurement: { carrier: "cu" } })).status, 400);
+  assert.equal((await send({ action: "cancel" })).status, 200);
+});
+
+test("managed reports do not account released tasks twice and explain busy dashes", async () => {
+  const DB = new FakeD1();
+  const NODE_CORE = new FakeNodeCore();
+  const env = { DB, NODE_CORE, RATE_LIMIT_SALT: "test-salt" };
+  const fields = basicFields();
+  const report = JSON.parse(fields.speed_data);
+  report.lease_id = "managed_fixture_12345";
+  report.results[0].status = "failed";
+  report.results[0].error = "节点繁忙";
+  report.results[0].single = null;
+  report.results[0].latency_ms = null;
+  fields.speed_data = JSON.stringify(report);
+  const result = await submitResult(fields, env);
+  assert.equal(result.status, 201);
+  assert.equal(NODE_CORE.feedback.length, 0);
+  const page = await (await worker.fetch(new Request((await result.text()).trim()), env)).text();
+  assert.match(page, /节点繁忙/);
 });
 
 test("firewall preparation polling does not consume the normal lease retry", async () => {

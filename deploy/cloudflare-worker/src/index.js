@@ -182,7 +182,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.1.3").trim();
+  const version = String(env.PROBE_VERSION || "v1.2.0").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -1088,6 +1088,8 @@ async function createSession(request, env) {
   return textResponse(`${token}\n`, 201, {
     "cache-control": "no-store",
     "x-session-expires-at": String(expiresAt),
+    "x-sq-task-scheduler": env.NODE_CORE && typeof env.NODE_CORE.fetch === "function" &&
+      ["1", "true"].includes(String(env.TASK_SCHEDULER_ENABLED).toLowerCase()) ? "1" : "0",
   });
 }
 
@@ -1437,6 +1439,76 @@ async function requestNodeLease(request, env) {
   });
 }
 
+async function requestNodeTask(request, env) {
+  const now = Math.floor(Date.now() / 1000);
+  const authorized = await authorizeSession(request, env, now);
+  if (authorized.error) return jsonResponse({ error: "invalid_session" }, authorized.status);
+  const params = await parseSmallJSON(request);
+  const region = String(params?.region || "");
+  const family = String(params?.family || "");
+  const carrier = String(params?.carrier || "");
+  const action = String(params?.action || "");
+  const session = authorized.session;
+  if (!params || !["acquire", "finish", "cancel"].includes(action) ||
+      !String(session.regions).split(",").includes(region) || !CARRIER_CODES.has(carrier) ||
+      !["v4", "v6"].includes(family) || (session.ip_mode === "v4" && family !== "v4") ||
+      (action === "acquire" && session.completed_at)) {
+    return jsonResponse({ error: "invalid_task_request" }, 400);
+  }
+  if (!env.NODE_CORE || typeof env.NODE_CORE.fetch !== "function") {
+    return jsonResponse({ error: "task_scheduler_unavailable" }, 501);
+  }
+  const input = {
+    action, region, family, carrier, wait: params.wait === true,
+    session_id: authorized.tokenHash, source_id: session.client_hash,
+    client_ip: clientAddress(request), client_asn: Number(request.cf?.asn || 0) || null,
+    duration_seconds: Number(session.duration_seconds), target_mbps: Number(session.target_mbps),
+    modes: requestedModes(session.mode),
+    ...(session.community_node_id ? { community_node_id: session.community_node_id } : {}),
+  };
+  if (action === "finish") {
+    if (!/^task_[a-f0-9]{40}_[12]$/.test(String(params.lease_id || ""))) {
+      return jsonResponse({ error: "invalid_task_result" }, 400);
+    }
+    const checked = validateSpeedData(JSON.stringify({
+      version: 1, region: { code: region, name: REGION_NAMES[region] }, family,
+      lease_id: params.lease_id, started_at: now, completed_at: now,
+      modes: input.modes, duration_seconds: input.duration_seconds, target_mbps: input.target_mbps,
+      results: [params.measurement],
+    }));
+    if (checked.error || checked.reports[0].results[0].carrier !== carrier) {
+      return jsonResponse({ error: "invalid_task_result" }, 400);
+    }
+    input.lease_id = params.lease_id;
+    input.measurement = checked.reports[0].results[0];
+    input.retry = params.retry === true;
+  }
+  const result = await callCommunityCore(env, "/task", input, { requestID: requestID(request) });
+  if (!result.value) return jsonResponse({ error: "node_service_unavailable" }, 502);
+  if (action === "acquire" && result.status === 200) {
+    if (!validCoreLease(result.value, {
+      region, family, duration: input.duration_seconds, targetMbps: input.target_mbps, modes: input.modes,
+    }, now) || result.value.targets.length !== 1 || result.value.targets[0].carrier !== carrier ||
+        result.value.targets[0].candidates.length !== 1) {
+      await callCommunityCore(env, "/task", { ...input, action: "cancel" });
+      return jsonResponse({ error: "node_service_invalid_response" }, 502);
+    }
+    return jsonResponse(result.value);
+  }
+  if (result.status === 202 && result.value.status === "waiting") {
+    const reasons = new Set(["node_capacity_exhausted", "source_busy", "request_in_progress", "queue_full", "preparing"]);
+    return jsonResponse({ status: "waiting", reason: reasons.has(result.value.reason)
+      ? result.value.reason : "node_capacity_exhausted", retry_after_ms: 2000 }, 202, { "retry-after": "2" });
+  }
+  if (result.status === 200 && action !== "acquire") {
+    return jsonResponse({ released: result.value.released === true, retry: result.value.retry === true });
+  }
+  const errors = new Set([...PUBLIC_LEASE_ERRORS.keys(), "task_finished", "task_expired", "task_unavailable",
+    "task_lease_mismatch", "invalid_task_result", "invalid_task_request"]);
+  return jsonResponse({ error: errors.has(result.value.error)
+    ? result.value.error : "node_service_unavailable" }, result.status >= 400 ? result.status : 502);
+}
+
 async function enforceDailyLimit(request, env, now) {
   const limit = numberSetting(env.DAILY_RESULT_LIMIT, DEFAULT_DAILY_LIMIT, 1, 10000);
   const day = new Date(now * 1000).toISOString().slice(0, 10);
@@ -1589,6 +1661,8 @@ function sessionMatchesReport(session, report) {
 function healthMeasurements(speedReports) {
   const measurements = [];
   for (const report of speedReports) {
+    // Managed tasks already account and release after each individual node.
+    if (report.lease_id.startsWith("managed_")) continue;
     for (const result of report.results) {
       if (!result.node_id) continue;
       const modes = [result.single, result.multi].filter(Boolean);
@@ -1999,7 +2073,7 @@ function renderStructuredSpeedText(value, options = {}) {
       lines.push(headings.join("  "));
       for (const result of rows) {
         const failed = result.status !== "ok";
-        const unavailable = failed && result.error === "没有可连接的候选节点";
+        const unavailable = failed && ["没有可连接的候选节点", "节点繁忙", "同一来源已有测速任务", "当前地区暂无可用测速节点"].includes(result.error);
         const latencyNumber = Number(result.latency_ms);
         const latency = result.latency_ms != null && Number.isFinite(latencyNumber)
           ? `${Math.round(latencyNumber)}ms`
@@ -2018,6 +2092,9 @@ function renderStructuredSpeedText(value, options = {}) {
           ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps), colored),
         ];
         lines.push(columns.join("  "));
+      }
+      if (rows.some((result) => ["节点繁忙", "同一来源已有测速任务"].includes(result.error))) {
+        lines.push(ansiText("  部分项目因节点繁忙或同一来源已有任务而跳过（-）。", "33", colored));
       }
     }
     return lines.join("\n");
@@ -2844,6 +2921,10 @@ async function routeRequest(request, env) {
       return textResponse("Method Not Allowed\n", 405, { allow: "POST" });
     }
     return requestNodeLease(request, env);
+  }
+  if (url.pathname === "/api/node-task") {
+    if (request.method !== "POST") return textResponse("Method Not Allowed\n", 405, { allow: "POST" });
+    return requestNodeTask(request, env);
   }
 
   const reportMatch = url.pathname.match(/^\/r\/([^/]+)$/);

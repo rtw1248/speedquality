@@ -40,13 +40,17 @@ type progressTracker struct {
 	tipStatePath string
 	tipOffset    time.Duration
 
-	mu        sync.Mutex
-	completed int
-	label     string
-	frame     int
-	tipShown  bool
-	tipSlot   int
-	tip       string
+	mu           sync.Mutex
+	completed    int
+	label        string
+	frame        int
+	tipShown     bool
+	tipSlot      int
+	tip          string
+	waitingLabel string
+	waitStarted  time.Time
+	waitBefore   time.Duration
+	waitBudget   time.Duration
 }
 
 func terminalProgressEnabled() bool {
@@ -100,7 +104,17 @@ func (tracker *progressTracker) Update(completed int, label string) {
 	}
 	tracker.completed = completed
 	tracker.label = label
+	tracker.waitingLabel = ""
 	tracker.mu.Unlock()
+}
+
+func (tracker *progressTracker) Waiting(label string, before, budget time.Duration) {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	tracker.waitingLabel = label
+	tracker.waitStarted = time.Now()
+	tracker.waitBefore = before
+	tracker.waitBudget = budget
 }
 
 func (tracker *progressTracker) Finish() {
@@ -131,6 +145,13 @@ func (tracker *progressTracker) render() {
 		elapsed,
 		tracker.frame,
 	)
+	if tracker.waitingLabel != "" {
+		waited := tracker.waitBefore + time.Since(tracker.waitStarted)
+		if waited > tracker.waitBudget {
+			waited = tracker.waitBudget
+		}
+		line = fmt.Sprintf("[等待] %s · 累计等待 %.0f 秒 / 最多 %.0f 秒", tracker.waitingLabel, waited.Seconds(), tracker.waitBudget.Seconds())
+	}
 	width := progressTerminalWidth(tracker.writer) - 1
 	if tracker.tipShown {
 		fmt.Fprint(tracker.writer, "\r\x1b[1A")

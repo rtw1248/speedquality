@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.1.3"
-readonly FALLBACK_PROBE_VERSION="v1.1.3"
+readonly SPEEDQUALITY_VERSION="1.2.0"
+readonly FALLBACK_PROBE_VERSION="v1.2.0"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -76,6 +76,7 @@ TRAFFIC_ESTIMATE=""
 LEASE_ERROR_CODE=""
 LEASE_ERROR_MESSAGE=""
 LEASE_ERROR_RETRYABLE=1
+TASK_SCHEDULER=0
 
 SESSION_TOKEN=""
 SESSION_TOKEN_V4=""
@@ -1351,7 +1352,10 @@ request_speed_session_token() {
     --data-urlencode "duration_seconds=$SPEED_DURATION_SECONDS" \
     --data-urlencode "target_mbps=$SPEED_TARGET_MBPS" \
     "${node_route_args[@]}" \
-    "${REPORT_BASE%/}/api/session" -o "$response_file"
+    "${REPORT_BASE%/}/api/session" -D "$response_file.headers" -o "$response_file" || return 1
+  if [[ -f "$response_file.headers" ]] && LC_ALL=C grep -qi '^x-sq-task-scheduler: 1' "$response_file.headers"; then
+    TASK_SCHEDULER=1
+  fi
 }
 
 create_speed_session() {
@@ -1536,6 +1540,33 @@ run_speedtest() {
   fi
   IFS=',' read -r -a region_codes <<< "$SELECTED_REGION_CODES"
   info "开始运行 SpeedQuality 测速"
+  if ((TASK_SCHEDULER == 1)) && [[ -z "${SPEEDQUALITY_LEASE_DIR:-}" ]]; then
+    local token_file_v4="$TEMP_DIR/task-session-v4.txt"
+    local token_file_v6="$TEMP_DIR/task-session-v6.txt"
+    local task_carriers="${NODE_ROUTE_CARRIER:-ct,cu,cm}"
+    local task_families="${RUN_FAMILIES// /,}"
+    task_families="${task_families#,}"
+    task_families="${task_families%,}"
+    printf '%s' "$SESSION_TOKEN_V4" > "$token_file_v4"
+    printf '%s' "$SESSION_TOKEN_V6" > "$token_file_v6"
+    chmod 600 "$token_file_v4" "$token_file_v6"
+    local -a session_args=()
+    [[ -z "$SESSION_TOKEN_V4" ]] || session_args+=(--session-v4-file "$token_file_v4")
+    [[ -z "$SESSION_TOKEN_V6" ]] || session_args+=(--session-v6-file "$token_file_v6")
+    set +e
+    SPEEDQUALITY_NQ_BINDING_ENABLED="$NODEQUALITY_BINDING_ENABLED" \
+      SPEEDQUALITY_TIP_STATE_FILE="$TEMP_DIR/progress-tip.json" \
+      "$PROBE_BINARY" schedule --base "$REPORT_BASE" --regions "$SELECTED_REGION_CODES" \
+      --names "$SELECTED_POINTS" --families "$task_families" --carriers "$task_carriers" \
+      --speed "$SPEED_TARGET_MBPS" --output "$SPEED_DATA_FILE" \
+      --reference-time "$(measurement_epoch)" "${session_args[@]}" "${diagnostic_args[@]}" | tee -a "$SPEED_LOG"
+    status=${PIPESTATUS[0]}
+    set -e
+    finish_traffic_measurement "$traffic_before"
+    ((status == 0)) || exit "$status"
+    SPEED_TEST_EPOCH=$(measurement_epoch)
+    return
+  fi
   for region in "${region_codes[@]}"; do
     printf '\n%s%s%s\n' "$C_CYAN" "$(region_name "$region")" "$C_RESET" | tee -a "$SPEED_LOG"
     for family in $RUN_FAMILIES; do

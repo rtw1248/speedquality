@@ -23,6 +23,13 @@ const (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "schedule" {
+		if err := runScheduledCommand(os.Args[2:], os.Stdout, os.Stderr); err != nil && err != flag.ErrHelp {
+			fmt.Fprintf(os.Stderr, "[X] %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "nq-verify" {
 		if err := runNodeQualityCommand(os.Args[2:], os.Stdout, os.Stderr); err != nil {
 			if err == flag.ErrHelp {
@@ -137,7 +144,8 @@ func printReport(writer io.Writer, report Report) {
 			latencyCellColor := red
 			download, upload := "失败", "失败"
 			downloadColor, uploadColor := red, red
-			unavailable := result.Error == "没有可连接的候选节点"
+			unavailable := result.Error == "没有可连接的候选节点" || result.Error == "节点繁忙" ||
+				result.Error == "同一来源已有测速任务" || result.Error == "当前地区暂无可用测速节点"
 			if unavailable {
 				download, upload = "-", "-"
 			}

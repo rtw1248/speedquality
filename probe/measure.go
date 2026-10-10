@@ -166,6 +166,8 @@ type preparedTarget struct {
 
 type transferProgress func(completed int, stage string)
 
+type leaseProgressOffset struct{}
+
 func runLease(ctx context.Context, lease Lease, progress *progressTracker, now func() time.Time) Report {
 	started := time.Now()
 	diagnostic(ctx, slog.LevelInfo, "lease.started",
@@ -187,6 +189,9 @@ func runLease(ctx context.Context, lease Lease, progress *progressTracker, now f
 	}
 	for index, target := range lease.Targets {
 		baseProgress := index * 3
+		if offset, ok := ctx.Value(leaseProgressOffset{}).(int); ok {
+			baseProgress += offset
+		}
 		progress.Update(baseProgress, target.Label+" / 连接节点")
 		prepared := prepareTarget(ctx, lease.Family, target)
 		updateProgress := func(completed int, stage string) {

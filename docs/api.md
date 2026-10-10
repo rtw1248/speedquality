@@ -55,6 +55,59 @@ regions=hb&mode=s&ip_mode=v4&duration_seconds=5&target_mbps=200&node_route=sqn_.
 `node_route` 使用注册时签发的 Route Key。该会话只允许一个省份，地区、IP 类型和档位必须与
 登记节点一致；节点不可用时创建失败，后续租约也不会回退到其它社区或兼容节点。
 
+## 单节点调度（v1.2，可选）
+
+实现新调度的部署在会话响应中返回 `X-SQ-Task-Scheduler: 1`；未提供该能力时，客户端继续
+使用原来的 `/api/node-lease`，静态自建节点无需实现平台队列。
+
+```http
+POST /api/node-task
+Authorization: Bearer <session-token>
+Content-Type: application/json
+
+{"action":"acquire","region":"bj","family":"v4","carrier":"ct","wait":false}
+```
+
+每个任务只对应一个省份、地址族和运营商。`acquire` 成功返回原有 v1 租约格式，但只含一个
+运营商和一个候选节点；激活、上传、下载和节点 `/release` 协议不变。
+节点忙时返回 HTTP 202：
+
+```json
+{"status":"waiting","reason":"node_capacity_exhausted","retry_after_ms":2000}
+```
+
+`wait:false` 只尝试立即分配，不保留队列票据，客户端可先测其他项目。完成首轮后，以
+`wait:true` 等待短队列；轮询间隔约 2 秒，所有省份和双栈累计等待最多 30 秒。
+`reason` 还可能为 `source_busy`、`queue_full`、`request_in_progress` 或社区防火墙准备阶段的
+`preparing`。等待不代表丢包、测速失败或带宽不足，不能编造队列位置和预计完成时间。
+
+每个节点测完，先执行租约内的节点释放操作，再提交：
+
+```json
+{
+  "action":"finish","region":"bj","family":"v4","carrier":"ct",
+  "lease_id":"task_<40位十六进制ID>_1","retry":false,
+  "measurement":{
+    "carrier":"ct","label":"北京电信","node_id":"<32位十六进制ID>",
+    "status":"ok","latency_ms":30,
+    "single":{"download_mbps":199,"upload_mbps":198,"download_bytes":100000000,"upload_bytes":100000000}
+  }
+}
+```
+
+平台在该步骤核算反馈并释放容量，不等最终报告。响应 `{"released":true,"retry":false}`；
+重复提交不能重复记账。只有未进入数据传输的连接/激活失败可请求 `retry:true`，每个任务至多
+使用两个候选。取消或等待超时发送同一任务范围的 `action:cancel`。网络中断时，等待票据
+15 秒过期、已签发租约 90 秒到期兜底。最终报告按省份/地址族合并三网结果，以 `managed_`
+开头的聚合 `lease_id` 标记已即时反馈的任务，避免再次更新健康和流量统计。
+
+动态 Provider 如需支持此能力，需增加内部 `POST /task`，输入为上述字段加公开层注入的
+`session_id`（会话摘要）、`source_id`（来源摘要）、`client_ip`、`client_asn`、`modes`、
+`duration_seconds`、`target_mbps` 和可选的 `community_node_id`。这些授权字段不能信任
+公开请求的同名参数。接口继续使用 `x-node-core-secret` 内部鉴权；按节点原子检查名额和
+排队顺序，并限制同一来源同时一个任务，重复获取必须返回同一租约。
+完成迁移和 Provider 更新后，公开层才设置 `TASK_SCHEDULER_ENABLED=true`。
+
 ## 社区节点管理
 
 ### 自动检测

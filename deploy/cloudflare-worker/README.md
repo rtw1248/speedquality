@@ -12,6 +12,7 @@
 | `GET /api/features` | 返回客户端可选能力的运营开关 |
 | `POST /api/session` | 创建与来源 IP 绑定的短期会话 |
 | `POST /api/node-lease` | 从静态配置或私有 Provider 获取单地区租约 |
+| `POST /api/node-task` | 动态节点的单运营商分配、等待、完成与取消 |
 | `POST /api/results` | 保存结构化测速结果和可选 NodeQuality 快照 |
 | `POST /api/nodes/register` | 注册社区节点并转发真实来源 IP |
 | `POST /api/nodes/heartbeat` | 使用节点 API Token 同步容量和状态 |
@@ -70,6 +71,11 @@ Provider Worker：
 动态 Provider 合同。官方动态适配器负责把上游原始协议转换为通用租约；第三方节点不能放入
 `STATIC_NODES` 冒充 SQ 自建节点。
 
+v1.2 的短队列需 Provider 实现 `POST /task` 合同，确认支持后设置
+`TASK_SCHEDULER_ENABLED = "true"`。未设置时不启用，兼容现有自建 Provider 和静态节点。
+官方部署更新顺序为：应用 Core 数据库迁移、部署 Core、发布探针、最后部署公开 Worker。
+客户端根据会话响应头协商新调度，不需要用户增加参数。合同见[API 文档](../../docs/api.md)。
+
 ## 2. 配置公开 Worker
 
 安装 Wrangler 并登录：
@@ -89,8 +95,8 @@ routes = [{ pattern = "sq.yolo2.cc", custom_domain = true }]
 [vars]
 GITHUB_OWNER = "YOUR_GITHUB_USER"
 GITHUB_REPO = "speedquality"
-GITHUB_REF = "v1.1.3"
-PROBE_VERSION = "v1.1.3"
+GITHUB_REF = "v1.2.0"
+PROBE_VERSION = "v1.2.0"
 RESULT_TTL_DAYS = "90"
 DAILY_RESULT_LIMIT = "100"
 DAILY_SESSION_LIMIT = "20"
