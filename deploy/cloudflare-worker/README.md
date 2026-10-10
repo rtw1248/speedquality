@@ -269,9 +269,7 @@ NodeQuality；Worker 也会把旧客户端提交的关联结果强制降级为�
 快照 JSON 最多 256 KiB，其中 ANSI 文本合计最多 192 KiB。容量估算见
 [`../../docs/capacity.md`](../../docs/capacity.md)。
 
-## 本地验证
-
-### 链接分享预览
+## 链接分享预览
 
 报告 HTML 直接输出 Open Graph 和 Twitter Card 元数据，爬虫不需要执行 JavaScript。
 `GET /r/<REPORT_ID>/preview-v1.png` 返回 1200 × 630 的 PNG，`HEAD` 可检查可用性。
@@ -299,7 +297,7 @@ python3 tools/build-share-font.py --font '/path/to/NotoSansSC[wght].ttf'
 
 字库生成器包含静态文案、省份和 ASCII 字符；新增文案时同步补充字符并提交生成的 `share-font.js`。
 
-### 回归检查
+## 本地验证
 
 ```bash
 npm test

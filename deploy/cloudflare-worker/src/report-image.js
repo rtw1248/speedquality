@@ -33,6 +33,28 @@ function glyph(size, character) {
   return result;
 }
 
+function tintedPixels(g, color) {
+  if (!g.tinted.has(color)) {
+    const pixels = g.pixels.slice(), tint = colorIndex[color];
+    for (let i = 0; i < pixels.length; i++) if (pixels[i]) pixels[i] += tint;
+    g.tinted.set(color, pixels);
+  }
+  return g.tinted.get(color);
+}
+
+// Decode the bounded alphabet during Worker startup rather than charging the
+// first image request for font preparation. Only colors used at each size are
+// prepared; this uses a few MiB and needs no request-time I/O.
+for (const [size, colors] of Object.entries({
+  20: ["muted", "orange"], 24: ["white", "muted", "green", "orange", "red", "cyan"],
+  32: ["green", "cyan"], 40: ["white"],
+})) {
+  for (const character of Object.keys(SHARE_FONT[size])) {
+    const g = glyph(size, character);
+    for (const color of colors) tintedPixels(g, color);
+  }
+}
+
 const crcTable = Uint32Array.from({ length: 256 }, (_, value) => {
   for (let i = 0; i < 8; i++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
   return value >>> 0;
@@ -56,11 +78,9 @@ export async function renderPreviewPNG(model) {
   const text = (value, x, baseline, size = 24, color = "white", align = "left") => {
     const characters = [...String(value)].slice(0, 160);
     if (align === "right") x -= characters.reduce((sum, ch) => sum + glyph(size, ch).advance, 0);
-    const tint = colorIndex[color];
     for (const ch of characters) {
       const g = glyph(size, ch);
-      if (!g.tinted.has(color)) g.tinted.set(color, g.pixels.map((alpha) => alpha ? tint + alpha : 0));
-      const pixels = g.tinted.get(color);
+      const pixels = tintedPixels(g, color);
       const left = Math.max(0, x + g.left), right = Math.min(width, x + g.left + g.width);
       const skip = left - x - g.left;
       if (right <= left) { x += g.advance; continue; }
