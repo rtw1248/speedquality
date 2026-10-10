@@ -2106,13 +2106,10 @@ export function reportPreviewModel(report) {
   };
 }
 
-function renderStructuredSpeedText(value, options = {}) {
-  const reports = storedSpeedReports(value);
-  if (reports.length === 0) return "";
-  const colored = options.colored === true;
+function groupSpeedReports(value) {
   const groups = [];
   const groupByRegion = new Map();
-  for (const report of reports) {
+  for (const report of storedSpeedReports(value)) {
     const code = String(report.region?.code || "");
     const name = String(report.region?.name || "未知地区");
     const key = `${code}\u0000${name}`;
@@ -2124,7 +2121,12 @@ function renderStructuredSpeedText(value, options = {}) {
     }
     group.reports.push(report);
   }
-  return groups.map((group) => {
+  return groups;
+}
+
+function renderStructuredSpeedText(value, options = {}) {
+  const colored = options.colored === true;
+  return groupSpeedReports(value).map((group) => {
     const lines = [];
     lines.push(ansiText(group.name, "1;96", colored));
     for (const [reportIndex, report] of group.reports.entries()) {
@@ -2159,6 +2161,51 @@ function renderStructuredSpeedText(value, options = {}) {
     }
     return lines.join("\n");
   }).join("\n\n");
+}
+
+function renderMobileSpeedReport(report, options) {
+  const metric = (value, color) => ansiToHtml(ansiText(value.replace("Mbps", ""), color, true));
+  const groups = groupSpeedReports(report.speed_data);
+  const tables = groups.map((group) => `<section class="mobile-region">
+    <h2>${escapeHtml(group.name)}</h2>
+    ${group.reports.map((entry) => {
+      const rows = Array.isArray(entry.results) ? entry.results : [];
+      const familyValue = String(entry.family || "").toLowerCase();
+      const family = familyValue === "v4" ? "IPv4" : familyValue === "v6" ? "IPv6" : familyValue.toUpperCase() || "IP";
+      const target = TARGET_SPEEDS.has(Number(entry.target_mbps)) ? Number(entry.target_mbps) : null;
+      const busy = rows.some((row) => ["节点繁忙", "同一来源已有测速任务"].includes(row.error));
+      return `<table class="mobile-speed-table" aria-label="${escapeHtml(group.name)} ${escapeHtml(family)} 单线程测速">
+        <colgroup><col class="carrier-column"><col class="latency-column"><col><col></colgroup>
+        <thead><tr><th scope="col">${escapeHtml(family)}</th><th scope="col">延迟</th><th scope="col">上传 <small>Mbps</small></th><th scope="col">下载 <small>Mbps</small></th></tr></thead>
+        <tbody>${rows.map((result) => {
+          const values = speedRowValues(result, target);
+          return `<tr><th scope="row">${escapeHtml(values.carrier)}</th><td>${metric(values.latency, latencyAnsiCode(result.latency_ms))}</td><td>${metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target))}</td><td>${metric(values.downloadValue, speedAnsiCode(values.downloadMbps, target))}</td></tr>`;
+        }).join("")}</tbody>
+      </table>${busy ? '<p class="mobile-busy-note">部分项目因节点繁忙或同一来源已有任务而跳过（-）。</p>' : ""}`;
+    }).join("")}
+  </section>`).join("");
+  const target = Number(report.target_mbps);
+  const maskedIP = stripUnsafeTerminalText(report.source_ip_masked || "") || "IP 段未知";
+  const version = stripUnsafeTerminalText(boundedText(report.version, 32));
+  const reportUrl = normalizeHttpsUrl(options.reportUrl, 2048);
+  const command = reportUrl ? `bash <(curl -fsSL ${new URL(reportUrl).origin}/run)` : "";
+  const configuration = ["单线程", TARGET_SPEEDS.has(target) ? `${target} Mbps 档位` : ""].filter(Boolean).join(" / ");
+  const legacyText = ansiToHtml(report.speed_text);
+  return `<div class="sq-mobile-report">
+    <div class="mobile-report-meta">
+      <p class="mobile-report-ip">${escapeHtml(maskedIP)}</p>
+      <p>报告时间：${escapeHtml(formatTime(report.tested_at))}</p>
+      <p>测速配置：${escapeHtml(configuration)}</p>
+      ${version ? `<p>脚本版本：${escapeHtml(version)}</p>` : ""}
+      ${command ? `<details class="mobile-run-command"><summary>测速命令</summary><code>${escapeHtml(command)}</code></details>` : ""}
+    </div>
+    ${tables || (legacyText ? `<p class="mobile-scroll-hint">左右滑动查看完整内容</p><div class="mobile-legacy-scroll" tabindex="0" role="region" aria-label="测速结果"><pre class="ansi-output">${legacyText}</pre></div>` : report.speed_url ? "" : '<p class="empty-state">测速内容暂不可用。</p>')}
+    ${options.hasTraffic ? `<div class="mobile-traffic" aria-label="实际流量"><p>实际流量</p><dl>
+      <div><dt>下载</dt><dd>${escapeHtml(formatBytes(options.trafficRxBytes))}</dd></div>
+      <div><dt>上传</dt><dd>${escapeHtml(formatBytes(options.trafficTxBytes))}</dd></div>
+      <div><dt>合计</dt><dd>${escapeHtml(formatBytes(options.trafficRxBytes + options.trafficTxBytes))}</dd></div>
+    </dl></div>` : ""}
+  </div>`;
 }
 
 function trafficReportText(
@@ -2446,8 +2493,8 @@ export function renderReport(report, options = {}) {
   const copyActions = (position) => `
       <div class="copy-actions copy-actions-${position}" role="group" aria-label="${position === "top" ? "上方" : "下方"}复制报告">
         <button type="button" data-copy-source="copy-report-text">复制文本</button>
-        <button type="button" data-copy-source="copy-report-nodeseek" data-download="${escapeHtml(downloadBaseName)}_NodeSeek.md">复制为NodeSeek格式</button>
-        <button class="general-md" type="button" data-copy-source="copy-report-markdown" data-download="${escapeHtml(downloadBaseName)}_Markdown.md">复制为通用Markdown</button>
+        <button type="button" data-copy-source="copy-report-nodeseek" data-download="${escapeHtml(downloadBaseName)}_NodeSeek.md">复制为<span class="mobile-copy-break"></span>NodeSeek格式</button>
+        <button class="general-md" type="button" data-copy-source="copy-report-markdown" data-download="${escapeHtml(downloadBaseName)}_Markdown.md">复制为<span class="mobile-copy-break"></span>通用Markdown</button>
       </div>`;
   const copyActionsTop = copyActions("top");
   const copyActionsBottom = copyActions("bottom");
@@ -2480,16 +2527,20 @@ export function renderReport(report, options = {}) {
     const terminalOutput = [headerOutput, speedOutput, trafficOutput].filter(Boolean).join("\n\n");
     const terminal = terminalOutput ? `
         <pre class="ansi-output sq-output">${terminalOutput}</pre>` : "";
+    const mobileReport = renderMobileSpeedReport(report, {
+      reportUrl: options.reportUrl, hasTraffic, trafficRxBytes, trafficTxBytes,
+    });
     content = `
     <section class="report-pane sq-addon-pane">
       ${speedImage}${terminal ? `<div class="sq-terminal-scroll">${terminal}</div>` : (!speedImage ? '<p class="empty-state">测速内容暂不可用。</p>' : "")}
+      ${mobileReport}
     </section>`;
   } else if (activeEntry?.page) {
     const page = activeEntry.page;
     const pageBody = page.format === "image" ? `
       <a class="result-image nq-image" href="${escapeHtml(page.image_url)}" rel="noreferrer">
         <img src="${escapeHtml(page.image_url)}" alt="${escapeHtml(page.title)}">
-      </a>` : `<div class="nq-terminal-scroll"><pre class="ansi-output nq-output">${ansiToHtml(page.content)}</pre></div>`;
+      </a>` : `<p class="mobile-scroll-hint">左右滑动查看完整内容</p><div class="nq-terminal-scroll" tabindex="0" role="region" aria-label="${escapeHtml(page.title)}"><pre class="ansi-output nq-output">${ansiToHtml(page.content)}</pre></div>`;
     content = `
     <section class="report-pane">
       ${pageBody}
@@ -2692,8 +2743,61 @@ export function renderReport(report, options = {}) {
     :is(.nq-terminal-scroll,.sq-terminal-scroll,.tabs-shell)::-webkit-scrollbar-track { border-radius:2px; background:#797979; }
     :is(.nq-terminal-scroll,.sq-terminal-scroll,.tabs-shell)::-webkit-scrollbar-thumb { border-radius:10px; background:#efefef; }
     :is(.nq-terminal-scroll,.sq-terminal-scroll,.tabs-shell)::-webkit-scrollbar-thumb:hover { background:#95e6ff; }
-    @media (max-width:768px) { header,main,footer,.copy-actions { width:auto; margin-inline:10px; } main { padding-inline:10px; } nav a { min-width:80px; } }
-    @media (max-width:640px) { header { min-height:100px; padding:20px 0 14px; } .brand-wordmark { font-size:34px; } .combined-wordmark .brand-wordmark { font-size:22px; } .wordmark-plus { margin-inline:7px; font-size:19px; } .copy-actions button { padding:0 1em; } .copy-actions .general-md { margin-left:0; } .copy-status { right:0; bottom:0; left:0; border-radius:0; text-align:center; } .ansi-output { font-size:12px; } .linked-report .nq-output { font-size:12px; } .linked-report .nq-terminal-scroll { min-height:460px; max-height:calc(100vh - 185px); } }
+    .sq-mobile-report,.mobile-scroll-hint,.mobile-copy-break { display:none; }
+    @media (max-width:768px) {
+      body.linked-report,body.standalone-report { background-attachment:scroll; }
+      header,main,footer,.copy-actions { width:auto; margin-inline:10px; }
+      header { min-height:100px; padding:20px 0 14px; }
+      .brand-wordmark { font-size:34px; }
+      .combined-wordmark .brand-wordmark { font-size:clamp(18px,5.2vw,28px); }
+      .wordmark-plus { margin-inline:6px; font-size:19px; }
+      main { min-height:0; padding:12px 10px; }
+      .tabs-shell { overflow:visible; }
+      nav { display:grid; grid-template-columns:repeat(auto-fit,minmax(80px,1fr)); width:100%; }
+      nav a { min-width:0; height:auto; min-height:44px; padding:6px 4px; }
+      .copy-actions { display:grid; grid-template-columns:.75fr 1.15fr 1.2fr; gap:6px; }
+      .copy-actions button { min-width:0; height:auto; min-height:44px; padding:6px 4px; font:400 12px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; overflow-wrap:anywhere; }
+      .copy-actions .general-md { margin-left:0; }
+      .mobile-copy-break { display:block; }
+      .copy-status { right:0; bottom:0; left:0; border-radius:0; text-align:center; }
+      .result-image { overflow:visible; }
+      img { width:auto; min-width:0; max-width:100%; height:auto; }
+      .sq-terminal-scroll { display:none; }
+      .sq-mobile-report { display:block; }
+      .mobile-report-meta { padding-bottom:12px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; color:var(--muted); font-size:12px; }
+      .mobile-report-meta p { margin:3px 0; }
+      .mobile-report-meta .mobile-report-ip { margin:0 0 7px; color:#95e6ff; font-size:16px; font-weight:600; }
+      .mobile-run-command { margin-top:5px; }
+      .mobile-run-command summary { width:fit-content; min-height:32px; padding:6px 0; cursor:pointer; color:#70a598; }
+      .mobile-run-command code { display:block; padding:8px; background:#0003; white-space:pre-wrap; overflow-wrap:anywhere; }
+      .mobile-region { margin-top:18px; }
+      .mobile-region h2 { color:#95e6ff; font-size:16px; }
+      .mobile-speed-table { width:100%; table-layout:fixed; border-collapse:collapse; margin-top:6px; font-size:13px; font-variant-numeric:tabular-nums; }
+      .mobile-speed-table + .mobile-speed-table { margin-top:16px; }
+      .mobile-speed-table .carrier-column { width:17%; }
+      .mobile-speed-table .latency-column { width:23%; }
+      .mobile-speed-table th,.mobile-speed-table td { padding:9px 2px; text-align:right; white-space:nowrap; }
+      .mobile-speed-table thead th { border-bottom:1px solid var(--line); color:#95e6ff; font-weight:600; }
+      .mobile-speed-table th:first-child { text-align:left; }
+      .mobile-speed-table tbody th { color:#70a598; font-weight:400; }
+      .mobile-speed-table small { display:block; font-size:10px; font-weight:400; }
+      .mobile-busy-note { color:var(--warn); font-size:12px; margin:8px 0; }
+      .mobile-traffic { margin:16px 0 12px; padding:12px 0; border-block:1px solid var(--line); }
+      .mobile-traffic p { margin:0 0 8px; font-size:13px; }
+      .mobile-traffic dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:0; }
+      .mobile-traffic dt { color:#70a598; font-size:12px; }
+      .mobile-traffic dd { margin:3px 0 0; color:#9eff6e; font-size:13px; font-variant-numeric:tabular-nums; }
+      .mobile-traffic dl > div:last-child dd { font-weight:700; }
+      .mobile-scroll-hint { display:block; margin:0 0 8px; color:var(--muted); font-size:12px; }
+      .mobile-legacy-scroll { overflow-x:auto; }
+      .linked-report .nq-terminal-scroll { min-height:0; max-height:none; overflow-x:auto; overflow-y:hidden; }
+      .linked-report .nq-output { min-width:100%; }
+      .ansi-output,.linked-report .nq-output { font-size:12px; }
+      .notice,.empty-state { overflow-wrap:anywhere; }
+      .report-summary { font-size:12px; }
+      .report-links { gap:4px 16px; }
+      .report-links > span { min-width:0; overflow-wrap:anywhere; }
+    }
   </style>
 </head>
 <body class="${hasNodeQuality ? "linked-report" : "standalone-report"}">
