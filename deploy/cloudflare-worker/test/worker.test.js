@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import { inflateSync } from "node:zlib";
 
-import worker, { formatReportCopies, maskedReportAddress, renderReport } from "../src/index.js";
+import worker, { formatReportCopies, maskedReportAddress, renderReport, reportPreviewModel } from "../src/index.js";
+import { SHARE_FONT } from "../src/share-font.js";
 import { logEvent } from "../src/observability.js";
 
 class FakeD1 {
@@ -1296,6 +1298,94 @@ test("report copy formats support plain text, NodeSeek, and general Markdown", (
   assert.match(copies.markdown, /# 速度质量\n```text/);
   assert.doesNotMatch(copies.markdown, /:::: tabs|::: tab-item|\[details=|\u001b/);
   assert.match(copies.markdown, /<\/textarea>/);
+});
+
+test("share metadata and image summary preserve metric states, scope and privacy", () => {
+  const speed = JSON.parse(structuredSpeedData());
+  speed.results[0].latency_ms = 41;
+  speed.results[0].status = "failed";
+  speed.results[0].single.upload_mbps = 0;
+  speed.results[0].single.download_mbps = 200;
+  const report = { id: "AtFndd9_BFJU", regions: "湖北、北京、上海、广东、内蒙古",
+    nq_url: "https://nodequality.com/r/TestReport", bind_status: "verified_stale",
+    tested_at: 1791619417, target_mbps: 200, speed_data: JSON.stringify([speed]),
+    source_ip_masked: "203.0.113.99", speed_text: "private fixture" };
+  const model = reportPreviewModel(report);
+  assert.equal(model.rows[0].latency.color, "green");
+  assert.deepEqual(model.rows[0].upload, { text: "失败", color: "red" });
+  assert.deepEqual(model.rows[0].download, { text: "200 ✓", color: "green" });
+  assert.match(model.note, /图中为湖北.*共 5 个地区.*NQ.*60 分钟/);
+  assert.doesNotMatch(JSON.stringify(model), /203\.0\.113|private fixture|node_id|lease_id/);
+  const page = renderReport(report, { reportUrl: "https://sq.example/r/AtFndd9_BFJU", tab: "speed" });
+  assert.match(page, /property="og:title" content="NodeQuality \+ SpeedQuality｜湖北、北京、上海、广东、内蒙古测速报告"/);
+  assert.match(page, /property="og:image" content="https:\/\/sq\.example\/r\/AtFndd9_BFJU\/preview-v1\.png"/);
+  assert.match(page, /name="twitter:card" content="summary_large_image"/);
+  for (const text of [model.brand, model.heading, model.configuration, model.note, model.time,
+    "运营商 / IP", "延迟", "上传 Mbps", "下载 Mbps", "打开报告查看完整结果", "本报告暂无测速数据"]) {
+    for (const character of text) assert.ok(SHARE_FONT[24][character], `Missing preview glyph: ${character}`);
+  }
+  const unknown = reportPreviewModel({ ...report, regions: '203.0.113.99<script>', speed_data: "invalid" });
+  assert.doesNotMatch(JSON.stringify(unknown), /203\.0\.113|<script>/);
+  assert.equal(unknown.rows.length, 0);
+});
+
+test("preview PNG is cached, read-only, compatible with old IDs, and expires with its report", async (t) => {
+  const now = Math.floor(Date.now() / 1000);
+  const DB = new FakeD1();
+  const id = "AtFndd9_BFJU";
+  DB.reports.set(id, { id, regions: "湖北", expires_at: now + 3, target_mbps: 200,
+    speed_data: JSON.stringify([JSON.parse(structuredSpeedData())]) });
+  let reads = 0;
+  const prepare = DB.prepare.bind(DB);
+  DB.prepare = (sql) => { assert.match(sql, /^SELECT \* FROM reports/); reads++; return prepare(sql); };
+  const env = { DB, SNAPSHOTS: { get() { throw new Error("preview must not read NQ snapshots"); } } };
+  const url = `https://sq.example/r/${id}/preview-v1.png`;
+  const responses = await Promise.all([worker.fetch(new Request(url), env), worker.fetch(new Request(url), env)]);
+  assert.equal(reads, 1, "concurrent preview requests share one lookup and render");
+  const response = responses[0];
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "image/png");
+  assert.match(response.headers.get("cache-control"), /max-age=[0-3](?:,|$)/);
+  const png = Buffer.from(await response.arrayBuffer());
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(png.readUInt32BE(16), 1200); assert.equal(png.readUInt32BE(20), 630);
+  const idat = [];
+  for (let i = 8; i < png.length;) {
+    const length = png.readUInt32BE(i);
+    if (png.toString("ascii", i + 4, i + 8) === "IDAT") idat.push(png.subarray(i + 8, i + 8 + length));
+    i += length + 12;
+  }
+  const pixels = inflateSync(Buffer.concat(idat));
+  assert.equal(pixels.length, 1201 * 630);
+  assert.ok(pixels.some((value) => value > 0));
+  const head = await worker.fetch(new Request(url, { method: "HEAD" }), env);
+  assert.equal(head.status, 200); assert.equal(await head.text(), ""); assert.equal(reads, 1);
+  assert.equal((await worker.fetch(new Request(url, { method: "POST" }), env)).status, 405);
+  assert.equal((await worker.fetch(new Request(url.replace(id, "Unknown12345")), env)).status, 404);
+  t.mock.method(Date, "now", () => (now + 4) * 1000);
+  assert.equal((await worker.fetch(new Request(url), env)).status, 404);
+  assert.equal(DB.usageCounters.size, 0);
+});
+
+test("edge preview cache reduces remaining lifetime and cannot revive expired reports", async (t) => {
+  const now = Math.floor(Date.now() / 1000);
+  const DB = new FakeD1();
+  const id = "Preview12345";
+  DB.reports.set(id, { id, expires_at: now + 30, regions: "湖北" });
+  const entries = new Map();
+  const env = { DB, PREVIEW_CACHE: {
+    async match(request) { return entries.get(request.url)?.clone(); },
+    async put(request, response) { entries.set(request.url, response.clone()); },
+  } };
+  const url = `https://sq.example/r/${id}/preview-v1.png`;
+  assert.equal((await worker.fetch(new Request(url + "?share=1"), env)).status, 200);
+  assert.deepEqual([...entries.keys()], [url]);
+  t.mock.method(Date, "now", () => (now + 20) * 1000);
+  const cached = await worker.fetch(new Request(url), env);
+  assert.equal(cached.status, 200);
+  assert.match(cached.headers.get("cache-control"), /max-age=10(?:,|$)/);
+  t.mock.method(Date, "now", () => (now + 31) * 1000);
+  assert.equal((await worker.fetch(new Request(url), env)).status, 404);
 });
 
 test("report network identity comes from the submitter's Cloudflare metadata", async () => {

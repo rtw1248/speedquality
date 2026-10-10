@@ -271,6 +271,36 @@ NodeQuality；Worker 也会把旧客户端提交的关联结果强制降级为�
 
 ## 本地验证
 
+### 链接分享预览
+
+报告 HTML 直接输出 Open Graph 和 Twitter Card 元数据，爬虫不需要执行 JavaScript。
+`GET /r/<REPORT_ID>/preview-v1.png` 返回 1200 × 630 的 PNG，`HEAD` 可检查可用性。
+有效期内的旧报告也支持；不包含结构化结果的早期报告显示通用卡片，过期或不存在的报告返回 404。
+联合报告显示 `NodeQuality + SpeedQuality`，时间校验警告保留在图片中。多省报告展示首个省份，
+并注明省份范围；图片只使用已保存的 SQ 数据，不读取 NQ 快照，不包含 IP、节点地址或访问凭据。
+
+图片按需生成，在 Cloudflare Cache API 缓存最多一小时，期限不会超过报告到期时间；
+VPS 使用最多 64 张 / 4 MiB 的进程缓存，重启后可重新生成。此缓存只保存可重建的分享图片，
+不替代 Redis 中的节点目录。重复生成请求会合并，每个进程最多同时生成四张。
+生成失败仅影响图片接口；测速、报告页面、分页及复制导出不依赖它。
+
+无需新增服务、依赖或数据库迁移，也不写入 KV、D1 或 R2。爬虫抓取图片仍会增加 HTTP 请求，
+未命中缓存时读取一次报告并使用 CPU 生成图片；Worker 部署方式仍计入其请求和读取配额。
+Telegram 等第三方可能继续保留已抓取的预览；服务端无法撤回它们的缓存。
+
+字形使用 Noto Sans SC 的小型位图子集，遵循 [SIL OFL 1.1](src/SHARE-FONT-LICENSE.txt)。
+生产运行不需要 Python 或在线字体。只有开发者修改图片文字或字体时，才需要用 Python 3 + Pillow
+和 [Noto Sans SC 可变字体](https://github.com/google/fonts/tree/main/ofl/notosanssc) 重新生成：
+
+```bash
+# 在仓库根目录执行；Pillow 可安装在开发者自己的虚拟环境中
+python3 tools/build-share-font.py --font '/path/to/NotoSansSC[wght].ttf'
+```
+
+字库生成器包含静态文案、省份和 ASCII 字符；新增文案时同步补充字符并提交生成的 `share-font.js`。
+
+### 回归检查
+
 ```bash
 npm test
 npm run check

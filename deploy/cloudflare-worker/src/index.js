@@ -1,4 +1,5 @@
 import { logEvent, requestID, routeLabel } from "./observability.js";
+import { reportImageResponse } from "./report-image-cache.js";
 
 const SCRIPT_MARKER = "__SPEEDQUALITY_REPORT_BASE__";
 const PROBE_VERSION_MARKER = "__SPEEDQUALITY_PROBE_VERSION__";
@@ -2050,6 +2051,61 @@ function speedAnsiCode(value, targetMbps) {
   return "1;91";
 }
 
+function speedRowValues(result, targetMbps) {
+  const failed = result.status !== "ok";
+  const unavailable = failed && ["没有可连接的候选节点", "节点繁忙", "同一来源已有测速任务", "当前地区暂无可用测速节点"].includes(result.error);
+  const latencyNumber = Number(result.latency_ms);
+  const latency = result.latency_ms != null && Number.isFinite(latencyNumber)
+    ? `${Math.round(latencyNumber)}ms` : "-";
+  const uploadMbps = Number(result.single?.upload_mbps);
+  const downloadMbps = Number(result.single?.download_mbps);
+  return {
+    carrier: CARRIER_NAMES[result.carrier] || result.label || result.carrier || "-",
+    latency, uploadMbps, downloadMbps,
+    uploadValue: unavailable ? "-" : failed && !(uploadMbps > 0) ? "失败" : formatMbps(uploadMbps, targetMbps),
+    downloadValue: unavailable ? "-" : failed && !(downloadMbps > 0) ? "失败" : formatMbps(downloadMbps, targetMbps),
+  };
+}
+
+export function reportPreviewModel(report) {
+  const reports = storedSpeedReports(report.speed_data).slice(0, 10).filter((entry) =>
+    REGION_NAMES[entry?.region?.code] && ["v4", "v6"].includes(entry.family));
+  const recordedRegions = String(report.regions || "").split(/[,，、\s]+/)
+    .map((name) => REGION_NAMES[name] || name).filter((name) => Object.values(REGION_NAMES).includes(name));
+  const regions = [...new Set([...recordedRegions, ...reports.map((entry) => REGION_NAMES[entry.region.code])])].slice(0, 5);
+  const firstRegion = regions[0] || "地区未知";
+  const families = [...new Set(reports.map((entry) => entry.family))].sort();
+  const familyLabel = families.length ? families.map((family) => family === "v4" ? "IPv4" : "IPv6").join(" / ") : "";
+  const targetMbps = TARGET_SPEEDS.has(Number(report.target_mbps)) ? Number(report.target_mbps) : null;
+  const configuration = ["单线程", targetMbps ? `${targetMbps} Mbps 档位` : "", familyLabel].filter(Boolean).join(" · ");
+  const color = (code) => code.includes("92") ? "green" : code.includes("255;165") ? "orange" : "red";
+  const selected = reports.filter((entry) => REGION_NAMES[entry.region.code] === firstRegion);
+  const rows = selected.slice(0, 2).flatMap((entry) => (Array.isArray(entry.results) ? entry.results : [])
+    .filter((result) => CARRIER_NAMES[result?.carrier]).slice(0, 3).map((result) => {
+      const target = TARGET_SPEEDS.has(Number(entry.target_mbps)) ? Number(entry.target_mbps) : targetMbps;
+      const values = speedRowValues(result, target);
+      const metric = (text, code) => ({ text: text.replace("Mbps", ""), color: text === "-" ? "muted" : color(code) });
+      return {
+        label: `${CARRIER_NAMES[result.carrier]} · ${entry.family === "v4" ? "IPv4" : "IPv6"}`,
+        latency: metric(values.latency, latencyAnsiCode(result.latency_ms)),
+        upload: metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target)),
+        download: metric(values.downloadValue, speedAnsiCode(values.downloadMbps, target)),
+      };
+    }));
+  const brand = report.nq_url ? "NodeQuality + SpeedQuality" : "SpeedQuality";
+  const heading = regions.length ? regions.join(" · ") : "测速报告";
+  const warning = report.bind_status === "verified_stale" ? "NQ 与测速时间相差超过 60 分钟"
+    : report.bind_status === "verified_time_unknown" ? "NQ 检测时间无法确认" : "";
+  const scope = regions.length > 1 ? `共 ${regions.length} 个地区，图中为${firstRegion} · 打开报告查看完整结果` : "";
+  const time = report.tested_at ? `测速时间：${formatTime(report.tested_at)}` : "";
+  return { brand, heading, configuration, rows, warning,
+    note: [regions.length > 1 ? `图中为${firstRegion} · 共 ${regions.length} 个地区` : "", warning].filter(Boolean).join("；") || "✓ 表示达到所选档位，不代表未限速峰值",
+    time, id: REPORT_ID_PATTERN.test(String(report.id || "")) ? report.id : "",
+    title: `${brand}｜${regions.length ? regions.join("、") : "服务器"}测速报告`,
+    description: [configuration, time, scope, warning].filter(Boolean).join(" · "),
+  };
+}
+
 function renderStructuredSpeedText(value, options = {}) {
   const reports = storedSpeedReports(value);
   if (reports.length === 0) return "";
@@ -2088,19 +2144,7 @@ function renderStructuredSpeedText(value, options = {}) {
       ];
       lines.push(headings.join("  "));
       for (const result of rows) {
-        const failed = result.status !== "ok";
-        const unavailable = failed && ["没有可连接的候选节点", "节点繁忙", "同一来源已有测速任务", "当前地区暂无可用测速节点"].includes(result.error);
-        const latencyNumber = Number(result.latency_ms);
-        const latency = result.latency_ms != null && Number.isFinite(latencyNumber)
-          ? `${Math.round(latencyNumber)}ms`
-          : "-";
-        const uploadMbps = Number(result.single?.upload_mbps);
-        const downloadMbps = Number(result.single?.download_mbps);
-        const uploadValue = unavailable ? "-"
-          : failed && !(uploadMbps > 0) ? "失败" : formatMbps(uploadMbps, targetMbps);
-        const downloadValue = unavailable ? "-"
-          : failed && !(downloadMbps > 0) ? "失败" : formatMbps(downloadMbps, targetMbps);
-        const carrier = CARRIER_NAMES[result.carrier] || result.label || result.carrier || "-";
+        const { carrier, latency, uploadMbps, downloadMbps, uploadValue, downloadValue } = speedRowValues(result, targetMbps);
         const columns = [
           ansiText(padDisplay(carrier, 8, "right"), "36", colored),
           ansiText(padDisplay(latency, 10, "right"), latencyAnsiCode(result.latency_ms), colored),
@@ -2310,6 +2354,24 @@ function usageCount(value) {
 
 export function renderReport(report, options = {}) {
   const hasNodeQuality = Boolean(report.nq_url);
+  const preview = reportPreviewModel(report);
+  const shareUrl = normalizeHttpsUrl(options.reportUrl, 2048);
+  const shareImageUrl = shareUrl ? `${shareUrl.split("?", 1)[0]}/preview-v1.png` : "";
+  const socialHead = shareUrl ? `
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="SpeedQuality">
+  <meta property="og:title" content="${escapeHtml(preview.title)}">
+  <meta property="og:description" content="${escapeHtml(preview.description)}">
+  <meta property="og:url" content="${escapeHtml(shareUrl)}">
+  <meta property="og:image" content="${escapeHtml(shareImageUrl)}">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="${escapeHtml(preview.title)}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="${escapeHtml(preview.title)}">
+  <meta name="twitter:description" content="${escapeHtml(preview.description)}">
+  <meta name="twitter:image" content="${escapeHtml(shareImageUrl)}">` : "";
   const trafficRxBytes = Number(report.traffic_rx_bytes);
   const trafficTxBytes = Number(report.traffic_tx_bytes);
   const hasTraffic = report.traffic_rx_bytes != null && report.traffic_rx_bytes !== "" &&
@@ -2560,7 +2622,7 @@ export function renderReport(report, options = {}) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>${escapeHtml(documentTitle)}</title>
+  <title>${escapeHtml(documentTitle)}</title>${socialHead}
   <style>
     :root { color-scheme:dark; --bg:#050508; --surface:#ffffff1a; --text:#f8dcc0; --muted:#9aa7a7; --line:#ffffff30; --accent:#37ff8b; --ok:#9eff6e; --okbg:#18341f99; --warn:#ffa500; --warnbg:#3a240f99; --danger:#fc5f5a; --dangerbg:#481a1a99; --terminal:transparent; --terminal-text:#f8dcc0; }
     * { box-sizing:border-box; }
@@ -2808,7 +2870,7 @@ async function serveProbeAsset(request, env, version, asset) {
   });
 }
 
-async function routeRequest(request, env) {
+async function routeRequest(request, env, context) {
   const url = new URL(request.url);
   const maintenance = String(env.MAINTENANCE_MODE || "");
   if ((maintenance === "drain" && ["/api/session", "/api/nodes/register"].includes(url.pathname)) ||
@@ -2943,6 +3005,11 @@ async function routeRequest(request, env) {
     return requestNodeTask(request, env);
   }
 
+  const previewMatch = url.pathname.match(/^\/r\/([A-Za-z0-9_-]{12})\/preview-v1\.png$/);
+  if (previewMatch) {
+    if (!["GET", "HEAD"].includes(request.method)) return textResponse("Method Not Allowed\n", 405, { allow: "GET, HEAD" });
+    return reportImageResponse(request, env, previewMatch[1], reportPreviewModel, context);
+  }
   const reportMatch = url.pathname.match(/^\/r\/([^/]+)$/);
   if (reportMatch) {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -2954,13 +3021,13 @@ async function routeRequest(request, env) {
   return textResponse("Not Found\n", 404, { "cache-control": "no-store" });
 }
 
-async function handleFetch(request, env) {
+async function handleFetch(request, env, context) {
   const started = Date.now();
   const currentRequestID = requestID(request);
   const pathname = new URL(request.url).pathname;
   let response;
   try {
-    response = await routeRequest(request, env);
+    response = await routeRequest(request, env, context);
   } catch (error) {
     logEvent(env, "error", "http.request_failed", {
       request_id: currentRequestID,

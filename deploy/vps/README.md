@@ -204,6 +204,10 @@ systemctl reload nginx
 
 缓存只应用于 `/bin/` 静态发行包。不要给 `/api/*`、`/r/*`、`/run` 配置 Cache Everything；沿用应用的 Cache-Control。普通 DNS/CDN 代理请求不消耗 Workers 调用配额，但仍须遵守 Cloudflare 免费服务条款，VPS 流量也受服务商套餐限制。
 
+报告附带 Telegram 等平台的分享预览。`/r/<REPORT_ID>/preview-v1.png` 由 Web 服务按已保存数据
+生成，并在进程中限量缓存，不需要额外容器、字体下载或图片存储。有效期和缓存策略见
+[分享预览说明](../cloudflare-worker/README.md#链接分享预览)。普通报告页面不加载这张图片。
+
 ## 7. 从现有 Cloudflare 迁移
 
 ### 凭据与演练

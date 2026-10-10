@@ -69,6 +69,7 @@ export function requestID(request) {
 }
 
 export function routeLabel(pathname) {
+  if (/^\/r\/[^/]+\/preview-v1\.png$/.test(pathname)) return "/r/:id/preview-v1.png";
   if (/^\/r\/[^/]+$/.test(pathname)) return "/r/:id";
   if (/^\/bin\/[^/]+\/[^/]+$/.test(pathname)) return "/bin/:version/:asset";
   return pathname.slice(0, 120);
