@@ -72,6 +72,15 @@ func TestPrintReportKeepsPartialMeasurementsVisible(t *testing.T) {
 	var output bytes.Buffer
 	printReport(&output, report)
 	plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(output.String(), "")
+	for _, coloredCell := range []string{
+		green + padDisplay("21ms", 10, "right") + reset,
+		red + padDisplay("失败", 18, "right") + reset,
+		yellow + padDisplay("123.45Mbps", 18, "right") + reset,
+	} {
+		if !strings.Contains(output.String(), coloredCell) {
+			t.Fatalf("partial measurements should keep their own colors: %q", output.String())
+		}
+	}
 	if !strings.Contains(plain, "    电信        21ms                失败          123.45Mbps") ||
 		strings.Contains(plain, "上传未产生有效数据") || strings.Contains(plain, "[失败]") {
 		t.Fatalf("partial failure should fit in a single row: %q", plain)

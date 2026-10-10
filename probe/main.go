@@ -134,27 +134,32 @@ func printReport(writer io.Writer, report Report) {
 		carrier := displayCarrier(result)
 		if result.Status != "ok" {
 			latency := "-"
+			latencyCellColor := red
 			download, upload := "失败", "失败"
+			downloadColor, uploadColor := red, red
 			unavailable := result.Error == "没有可连接的候选节点"
 			if unavailable {
 				download, upload = "-", "-"
 			}
 			if result.Latency > 0 {
 				latency = displayLatency(result.Latency)
+				latencyCellColor = latencyColor(result.Latency)
 			}
 			if result.Single != nil {
 				if result.Single.DownloadMbps > 0 {
 					download = displaySpeed(result.Single.DownloadMbps, report.TargetMbps)
+					downloadColor = speedColor(result.Single.DownloadMbps, report.TargetMbps)
 				}
 				if result.Single.UploadMbps > 0 {
 					upload = displaySpeed(result.Single.UploadMbps, report.TargetMbps)
+					uploadColor = speedColor(result.Single.UploadMbps, report.TargetMbps)
 				}
 			}
 			writeColumns(writer, []tableColumn{
 				{carrier, 8, "right", cyan},
-				{latency, 10, "right", red},
-				{upload, 18, "right", red},
-				{download, 18, "right", red},
+				{latency, 10, "right", latencyCellColor},
+				{upload, 18, "right", uploadColor},
+				{download, 18, "right", downloadColor},
 			}, reset)
 			continue
 		}

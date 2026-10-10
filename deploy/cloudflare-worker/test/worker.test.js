@@ -522,6 +522,27 @@ test("speed colors use 30 and 80 percent boundaries", () => {
   assert.match(page, /color:#9eff6e;font-weight:700">\s*200Mbps ✓<\/span>/);
 });
 
+test("failed uploads retain independent latency and download colors", () => {
+  const report = {
+    id: "Partial12345", target_mbps: 200,
+    speed_data: JSON.stringify([{
+      region: { code: "hb", name: "湖北" }, family: "v4", target_mbps: 200,
+      results: [{
+        carrier: "ct", latency_ms: 40.61, status: "failed",
+        error: "上传未产生有效数据",
+        single: { upload_mbps: 0, download_mbps: 200 },
+      }],
+    }]),
+  };
+  const page = renderReport(report);
+  assert.match(page, /color:#9eff6e">\s*41ms<\/span>/);
+  assert.match(page, /color:#fc5f5a;font-weight:700">\s*失败<\/span>/);
+  assert.match(page, /color:#9eff6e;font-weight:700">\s*200Mbps ✓<\/span>/);
+  const exported = formatReportCopies(report).nodeseek;
+  assert.match(exported, /\x1b\[92m\s*41ms\x1b\[0m/);
+  assert.match(exported, /\x1b\[1;92m\s*200Mbps ✓\x1b\[0m/);
+});
+
 test("health reports whether D1 is configured", async () => {
   const response = await worker.fetch(new Request("https://rtw.example/health"), {});
   assert.equal(response.status, 200);

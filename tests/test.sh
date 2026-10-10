@@ -390,13 +390,13 @@ test_ip_family_selection() {
     bash "$RUNNER" -p hb -v4 >"$TEST_DIR/v4-unavailable.out" 2>&1; then
     fail '-v4 在 IPv4 不可用时静默继续'
   fi
-  assert_contains "$TEST_DIR/v4-unavailable.out" '未检测到 IPv4 连通性'
+  assert_contains "$TEST_DIR/v4-unavailable.out" '无法通过 IPv4 连接 SpeedQuality'
 
   if report_env SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     bash "$RUNNER" -p hb -v6 >"$TEST_DIR/v6-unavailable.out" 2>&1; then
     fail '-v6 在 IPv6 不可用时静默继续'
   fi
-  assert_contains "$TEST_DIR/v6-unavailable.out" '未检测到 IPv6 连通性'
+  assert_contains "$TEST_DIR/v6-unavailable.out" '无法通过 IPv6 连接 SpeedQuality'
 
   if report_env bash "$RUNNER" -p hb -v4 -v6 >"$TEST_DIR/ip-conflict.out" 2>&1; then
     fail '-v4 和 -v6 被同时接受'
@@ -407,8 +407,40 @@ test_ip_family_selection() {
     bash "$RUNNER" -p hb >"$TEST_DIR/no-ip.out" 2>&1; then
     fail '没有可用地址族时仍开始测速'
   fi
-  assert_contains "$TEST_DIR/no-ip.out" '未检测到 IPv4 或 IPv6 连通性'
+  assert_contains "$TEST_DIR/no-ip.out" '无法连接 SpeedQuality：IPv4'
   pass '默认自动测试可用地址族，-v4/-v6 仅测指定类型且互斥'
+}
+
+test_connectivity_preflight() {
+  local mock_bin="$TEST_DIR/mock-preflight-bin"
+  local log="$TEST_DIR/preflight.log"
+  local output="$TEST_DIR/preflight.out"
+  mkdir -p "$mock_bin"
+  ln -s "$FIXTURES/mock-platform-curl.sh" "$mock_bin/curl"
+
+  report_env PATH="$mock_bin:$PATH" SPEEDQUALITY_HAS_IPV4= \
+    MOCK_PLATFORM_LOG="$log" MOCK_PREFLIGHT_EXIT=28 MOCK_PREFLIGHT_FAILURES=1 \
+    bash "$RUNNER" -p hb -v4 >"$output" 2>&1
+  [[ "$(grep -Fc 'connectivity -4' "$log")" == 2 ]] || fail '入口短暂超时后没有重试一次'
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
+
+  : > "$log"
+  report_env PATH="$mock_bin:$PATH" SPEEDQUALITY_HAS_IPV4= \
+    MOCK_PLATFORM_LOG="$log" MOCK_PREFLIGHT_HTTP_STATUS=503 \
+    bash "$RUNNER" -p hb -v4 >"$output" 2>&1
+  [[ "$(grep -Fc 'connectivity -4' "$log")" == 1 ]] || fail '入口 HTTP 错误被当成网络不通'
+  assert_contains "$output" "分享报告: $REPORT_PAGE"
+
+  : > "$log"
+  if report_env PATH="$mock_bin:$PATH" SPEEDQUALITY_HAS_IPV4= \
+    MOCK_PLATFORM_LOG="$log" MOCK_PREFLIGHT_EXIT=6 \
+    bash "$RUNNER" -p hb -v4 >"$output" 2>&1; then
+    fail '入口 DNS 持续失败后仍继续测速'
+  fi
+  [[ "$(grep -Fc 'connectivity -4' "$log")" == 2 ]] || fail '入口请求重试次数不正确'
+  assert_contains "$output" '无法通过 IPv4 连接 SpeedQuality（DNS 解析失败）'
+  assert_not_contains "$output" '未检测到 IPv4 连通性'
+  pass '入口预检区分 HTTP 响应与网络错误，短暂失败只重试一次并报告具体原因'
 }
 
 test_partial_failure_keeps_compact_table() {
@@ -706,7 +738,7 @@ test_traffic_estimate_and_measurement() {
   env PATH="$mock_bin:$PATH" \
     SPEEDQUALITY_REPORT_BASE="$REPORT_BASE" \
     SPEEDQUALITY_REPORT_RESPONSE_FILE="$REPORT_RESPONSE" \
-    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.1.2" \
+    SPEEDQUALITY_PROBE_BASE="$REPORT_BASE/bin/v1.1.3" \
     SPEEDQUALITY_CACHE_DIR="$TEST_DIR/download-cache" \
     SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
     MOCK_PLATFORM_LOG="$platform_log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
@@ -1071,7 +1103,7 @@ test_worker_injected_report_base() {
 test_worker_injected_node_installer_help() {
   local injected="$TEST_DIR/install-node-injected.sh"
   sed -e "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" \
-    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.1.2|g' \
+    -e 's|__SPEEDQUALITY_PROBE_VERSION__|v1.1.3|g' \
     "$ROOT_DIR/install-node.sh" > "$injected"
   bash "$injected" --help >"$TEST_DIR/install-node-help.out" 2>&1
   assert_contains "$TEST_DIR/install-node-help.out" \
@@ -1085,8 +1117,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.1.2'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.1.2'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.1.3'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.1.3'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
@@ -1129,6 +1161,7 @@ test_auto_ssh_region_in_terminal
 test_explicit_interactive_selection
 test_speed_aliases_and_validation
 test_ip_family_selection
+test_connectivity_preflight
 test_partial_failure_keeps_compact_table
 test_default_dual_uses_family_bound_sessions
 test_ipv6_only_uses_v6_control_plane

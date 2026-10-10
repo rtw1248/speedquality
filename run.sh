@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.1.2"
-readonly FALLBACK_PROBE_VERSION="v1.1.2"
+readonly SPEEDQUALITY_VERSION="1.1.3"
+readonly FALLBACK_PROBE_VERSION="v1.1.3"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -645,28 +645,57 @@ resolve_node_route() {
     || die "指定节点没有登记可用的 IPv4 或 IPv6"
 }
 
+check_platform_connectivity() {
+  local family="$1"
+  local attempt http_code curl_status
+  PLATFORM_CONNECTIVITY_ERROR="入口连通性预检未通过"
+  command -v curl >/dev/null 2>&1 || { PLATFORM_CONNECTIVITY_ERROR="缺少 curl"; return 1; }
+  if [[ "$REPORT_BASE" == "$REPORT_BASE_PLACEHOLDER" ]] || ! validate_https_url "$REPORT_BASE"; then
+    PLATFORM_CONNECTIVITY_ERROR="SpeedQuality 入口地址未配置或无效"
+    return 1
+  fi
+  for attempt in 1 2; do
+    # Any HTTPS response proves reachability; HTTP errors are handled by the API caller.
+    if http_code=$(curl "$family" --noproxy '*' --proto '=https' --tlsv1.2 -sS \
+      --connect-timeout 3 --max-time 6 --write-out '%{http_code}' \
+      "${REPORT_BASE%/}/api/time" -o /dev/null 2>/dev/null); then
+      [[ "$http_code" =~ ^[1-5][0-9][0-9]$ ]] && return 0
+      PLATFORM_CONNECTIVITY_ERROR="入口未返回 HTTP 响应"
+    else
+      curl_status=$?
+      case "$curl_status" in
+        5|6) PLATFORM_CONNECTIVITY_ERROR="DNS 解析失败" ;;
+        7) PLATFORM_CONNECTIVITY_ERROR="无法建立连接" ;;
+        28) PLATFORM_CONNECTIVITY_ERROR="连接超时" ;;
+        35) PLATFORM_CONNECTIVITY_ERROR="HTTPS 握手失败" ;;
+        60) PLATFORM_CONNECTIVITY_ERROR="HTTPS 证书验证失败" ;;
+        *) PLATFORM_CONNECTIVITY_ERROR="入口请求失败，curl 错误码 $curl_status" ;;
+      esac
+    fi
+  done
+  return 1
+}
+
 has_ipv4_connectivity() {
+  IPV4_CONNECTIVITY_ERROR="入口连通性预检未通过"
   case "${SPEEDQUALITY_HAS_IPV4:-}" in
     1|true|yes) return 0 ;;
     0|false|no) return 1 ;;
   esac
-  command -v curl >/dev/null 2>&1 || return 1
-  [[ "$REPORT_BASE" != "$REPORT_BASE_PLACEHOLDER" ]] || return 1
-  validate_https_url "$REPORT_BASE" || return 1
-  curl -4 --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 6 \
-    "${REPORT_BASE%/}/health" -o /dev/null 2>/dev/null
+  if check_platform_connectivity -4; then return 0; fi
+  IPV4_CONNECTIVITY_ERROR="$PLATFORM_CONNECTIVITY_ERROR"
+  return 1
 }
 
 has_ipv6_connectivity() {
+  IPV6_CONNECTIVITY_ERROR="入口连通性预检未通过"
   case "${SPEEDQUALITY_HAS_IPV6:-}" in
     1|true|yes) return 0 ;;
     0|false|no) return 1 ;;
   esac
-  command -v curl >/dev/null 2>&1 || return 1
-  [[ "$REPORT_BASE" != "$REPORT_BASE_PLACEHOLDER" ]] || return 1
-  validate_https_url "$REPORT_BASE" || return 1
-  curl -6 --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 6 \
-    "${REPORT_BASE%/}/health" -o /dev/null 2>/dev/null
+  if check_platform_connectivity -6; then return 0; fi
+  IPV6_CONNECTIVITY_ERROR="$PLATFORM_CONNECTIVITY_ERROR"
+  return 1
 }
 
 select_run_families() {
@@ -699,14 +728,14 @@ select_run_families() {
       fi
       if [[ -z "$RUN_FAMILIES" ]]; then
         if ((server_has_v4 == 0 && server_has_v6 == 0)); then
-          die "当前服务器未检测到 IPv4 或 IPv6 连通性"
+          die "无法连接 SpeedQuality：IPv4 ${IPV4_CONNECTIVITY_ERROR}；IPv6 ${IPV6_CONNECTIVITY_ERROR}。请检查网络/DNS 或稍后重试"
         fi
         die "当前服务器与指定节点没有共同可用的 IP 类型"
       fi
       ;;
     v4)
       ((server_has_v4 == 1)) \
-        || die "已指定 -v4，但当前服务器未检测到 IPv4 连通性"
+        || die "无法通过 IPv4 连接 SpeedQuality（${IPV4_CONNECTIVITY_ERROR}）；请检查网络/DNS 或稍后重试"
       if [[ -n "$NODE_ROUTE_KEY" ]] && ((NODE_ROUTE_HAS_V4 != 1)); then
         die "指定节点没有登记 IPv4，不能使用 -v4"
       fi
@@ -714,7 +743,7 @@ select_run_families() {
       ;;
     v6)
       ((server_has_v6 == 1)) \
-        || die "已指定 -v6，但当前服务器未检测到 IPv6 连通性"
+        || die "无法通过 IPv6 连接 SpeedQuality（${IPV6_CONNECTIVITY_ERROR}）；请检查网络/DNS 或稍后重试"
       if [[ -n "$NODE_ROUTE_KEY" ]] && ((NODE_ROUTE_HAS_V6 != 1)); then
         die "指定节点没有登记 IPv6，不能使用 -v6"
       fi

@@ -182,7 +182,7 @@ function reportPromotion(env) {
 }
 
 function configuredProbeVersion(env) {
-  const version = String(env.PROBE_VERSION || "v1.1.2").trim();
+  const version = String(env.PROBE_VERSION || "v1.1.3").trim();
   return /^v\d+\.\d+\.\d+$/.test(version) ? version : null;
 }
 
@@ -1943,17 +1943,17 @@ function ansiText(value, code, colored) {
   return colored ? `\x1b[${code}m${value}\x1b[0m` : value;
 }
 
-function latencyAnsiCode(value, failed) {
+function latencyAnsiCode(value) {
   const latency = Number(value);
-  if (failed || !Number.isFinite(latency)) return "1;91";
+  if (value == null || !Number.isFinite(latency) || latency < 0) return "1;91";
   if (latency <= 100) return "92";
   if (latency <= 200) return "38;2;255;165;0";
   return "1;91";
 }
 
-function speedAnsiCode(value, targetMbps, failed) {
+function speedAnsiCode(value, targetMbps) {
   const speed = Number(value);
-  if (failed || !Number.isFinite(speed) || !targetMbps) return "1;91";
+  if (!Number.isFinite(speed) || !targetMbps) return "1;91";
   const ratio = speed / targetMbps;
   if (ratio >= 0.8) return "1;92";
   if (ratio >= 0.3) return "38;2;255;165;0";
@@ -2013,9 +2013,9 @@ function renderStructuredSpeedText(value, options = {}) {
         const carrier = CARRIER_NAMES[result.carrier] || result.label || result.carrier || "-";
         const columns = [
           ansiText(padDisplay(carrier, 8, "right"), "36", colored),
-          ansiText(padDisplay(latency, 10, "right"), latencyAnsiCode(latencyNumber, failed), colored),
-          ansiText(padDisplay(uploadValue, 18, "right"), speedAnsiCode(uploadMbps, targetMbps, failed), colored),
-          ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps, failed), colored),
+          ansiText(padDisplay(latency, 10, "right"), latencyAnsiCode(result.latency_ms), colored),
+          ansiText(padDisplay(uploadValue, 18, "right"), speedAnsiCode(uploadMbps, targetMbps), colored),
+          ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps), colored),
         ];
         lines.push(columns.join("  "));
       }

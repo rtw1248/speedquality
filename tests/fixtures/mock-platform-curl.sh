@@ -10,11 +10,21 @@ authorization=""
 write_out=""
 response_status="200"
 tested_at=""
+noproxy=""
+fail_on_http=0
 
 while (($#)); do
   case "$1" in
     -4|-6)
       curl_family="$1"
+      shift
+      ;;
+    --noproxy)
+      noproxy="$2"
+      shift 2
+      ;;
+    -f*|--fail)
+      fail_on_http=1
       shift
       ;;
     -o)
@@ -52,6 +62,18 @@ done
 [[ -n "$output_file" && -n "$url" && -n "${MOCK_PLATFORM_LOG:-}" ]]
 case "$url" in
   */api/time)
+    if [[ "$output_file" == /dev/null ]]; then
+      [[ "$noproxy" == '*' ]] || exit 99
+      printf 'connectivity %s\n' "$curl_family" >> "$MOCK_PLATFORM_LOG"
+      attempt=$(grep -Fc -- "connectivity $curl_family" "$MOCK_PLATFORM_LOG")
+      if [[ "${MOCK_PREFLIGHT_EXIT:-0}" != 0 ]] && \
+        ((attempt <= ${MOCK_PREFLIGHT_FAILURES:-2})); then
+        printf '000'
+        exit "$MOCK_PREFLIGHT_EXIT"
+      fi
+      response_status="${MOCK_PREFLIGHT_HTTP_STATUS:-200}"
+      if ((fail_on_http == 1 && response_status >= 400)); then exit 22; fi
+    fi
     printf 'time %s\n' "$curl_family" >> "$MOCK_PLATFORM_LOG"
     printf '{"version":1,"epoch":%s}\n' "${MOCK_PLATFORM_EPOCH:-$(date +%s)}" > "$output_file"
     ;;
