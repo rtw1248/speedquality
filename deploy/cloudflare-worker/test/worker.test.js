@@ -1317,7 +1317,7 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.doesNotMatch(terminal, /github\.com/);
   assert.doesNotMatch(page, /sq-report-intro|分省三网|taierspeedtest/);
   assert.match(page, /<p class="report-links"><span>报告链接：[\s\S]*?<\/span><a [^>]+>GitHub 项目链接<\/a><\/p>/);
-  assert.match(page, /\.sq-header \.sq-wordmark \{ padding-left:0; border-left:0; \}/);
+  assert.match(page, /\.brand-wordmark \{[^}]*padding-left:0; border-left:0;/);
   assert.match(page, /今日速度检测量：<strong>1<\/strong>；总检测量：<strong>1<\/strong>。感谢使用 SpeedQuality！/);
   assert.match(page, /报告链接：<a href="https:\/\/rtw\.example\/r\//);
   assert.doesNotMatch(page, /SQ Node Verification|验证规范/);

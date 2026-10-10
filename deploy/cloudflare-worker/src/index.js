@@ -2508,12 +2508,10 @@ export function renderReport(report, options = {}) {
     .report-links { display:flex; flex-wrap:wrap; gap:0 16px; }
     footer { padding:2px 0 24px; color:#8f98a4; font-size:12px; text-align:center; }
     body.linked-report,body.standalone-report { padding-bottom:18px; background:radial-gradient(ellipse 80% 80% at 50% -20%,#7877c64d,#fff0),radial-gradient(125% 125% at 50% 10%,#000 40%,#63e); background-attachment:fixed; }
-    .brand-wordmark { position:relative; display:inline-block; padding-left:11px; border-left:6px solid #37ff8b; color:#fff; font:400 48px/1.2 Arial,sans-serif; text-decoration:none; }
+    .brand-wordmark { position:relative; display:inline-block; padding-left:0; border-left:0; color:#fff; font:400 48px/1.2 Arial,sans-serif; text-decoration:none; }
     .brand-wordmark span { color:inherit; }
     .combined-wordmark { display:flex; align-items:center; justify-content:center; }
-    .combined-wordmark .brand-wordmark { padding-left:11px; font-size:42px; }
-    .combined-wordmark .sq-wordmark { padding-left:0; border-left:0; }
-    .sq-header .sq-wordmark { padding-left:0; border-left:0; }
+    .combined-wordmark .brand-wordmark { font-size:42px; }
     .wordmark-plus { margin:0 11px; color:#fff; font:300 34px/1 Arial,sans-serif; }
     .nq-terminal-scroll,.sq-terminal-scroll { overflow:auto; scrollbar-color:#efefef #797979; scrollbar-width:thin; }
     .linked-report .nq-terminal-scroll { min-height:500px; max-height:min(760px,calc(100vh - 205px)); }
