@@ -1117,8 +1117,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.2.0'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.2.0'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.2.1'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.2.1'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
@@ -1189,5 +1189,7 @@ test_worker_injected_report_base
 test_worker_injected_node_installer_help
 test_version_and_safe_cleanup
 test_removed_options_and_no_markdown
+python3 "$ROOT_DIR/tests/test_client_lifecycle.py" "$REAL_PROBE"
+pass '临时下载、并行确认、退出清理及历史缓存保护集成测试'
 
 printf '1..%d\n' "$TESTS"

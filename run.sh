@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.2.0"
-readonly FALLBACK_PROBE_VERSION="v1.2.0"
+readonly SPEEDQUALITY_VERSION="1.2.1"
+readonly FALLBACK_PROBE_VERSION="v1.2.1"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -42,6 +42,12 @@ SPEED_DATA_FILE=""
 RESULT_PAGE_URL=""
 BIND_STATUS="standalone"
 TEMP_DIR=""
+RUN_RECORD=""
+RUN_PID=$$
+ALLOW_PARALLEL=0
+OWNED_PROBE=0
+PROBE_PID=""
+TEE_PID=""
 SPEED_LOG=""
 SPEED_DIAGNOSTIC_LOG="${SPEEDQUALITY_DIAGNOSTIC_LOG:-}"
 SPEED_TEST_EPOCH=0
@@ -146,6 +152,7 @@ SpeedQuality 选项:
   -i, --interactive       手动选择地区、测速档位和报告关联；默认直接测速
       --nq URL            绑定已有 NodeQuality 报告 URL 或报告 token
       --node ROUTE_KEY    精确使用自己的 SQ 节点；不传 -p 时采用节点登记省份
+      --allow-parallel    检测到其他 SQ 任务时直接继续，仍受平台并发限制
   -l, --list-provinces    显示支持的省份代码
   -h, --help              显示帮助
       --version           显示脚本和探针版本
@@ -170,13 +177,110 @@ EOF
 }
 
 cleanup() {
-  if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" &&
+  [[ "$BASHPID" == "$RUN_PID" ]] || return 0
+  trap '' INT TERM HUP
+  if [[ -n "$PROBE_PID" ]]; then
+    kill -TERM "$PROBE_PID" 2>/dev/null || true
+    wait "$PROBE_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$TEE_PID" ]]; then
+    kill -TERM "$TEE_PID" 2>/dev/null || true
+    wait "$TEE_PID" 2>/dev/null || true
+  fi
+  if ((OWNED_PROBE == 1)) && [[ -x "$PROBE_BINARY" && -d "$CACHE_DIR" ]]; then
+    "$PROBE_BINARY" cache-clean --path "$CACHE_DIR" --parent-pid "$RUN_PID" \
+      || warn "历史缓存清理未完成，已保留剩余文件，下次运行重试"
+  fi
+  if [[ -n "$RUN_RECORD" && ! -L "$RUN_RECORD" && -O "$RUN_RECORD" ]]; then
+    rm -f -- "$RUN_RECORD/owner"
+    rmdir -- "$RUN_RECORD" 2>/dev/null || true
+  fi
+  if [[ -n "$TEMP_DIR" && ! -L "$TEMP_DIR" && -O "$TEMP_DIR" && -d "$TEMP_DIR" &&
         "$(basename -- "$TEMP_DIR")" == speedquality.* &&
-        -f "$TEMP_DIR/$TEMP_MARKER_NAME" ]]; then
+        ! -L "$TEMP_DIR/$TEMP_MARKER_NAME" && -f "$TEMP_DIR/$TEMP_MARKER_NAME" ]]; then
     rm -rf -- "$TEMP_DIR"
   fi
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+process_start() {
+  local stat_line
+  local -a fields
+  [[ "$1" =~ ^[0-9]+$ ]] || return 1
+  IFS= read -r stat_line < "/proc/$1/stat" 2>/dev/null || return 1
+  read -r -a fields <<< "${stat_line##*) }"
+  [[ "${fields[0]:-Z}" != Z && "${fields[19]:-}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${fields[19]}"
+}
+
+register_run() {
+  local lock_fd record pid start boot extra current_start current_boot answer conflict=0
+  local announce="${1:-1}"
+  command -v flock >/dev/null 2>&1 || die "缺少 flock（util-linux），无法安全登记并行任务"
+  current_start=$(process_start "$RUN_PID") || die "无法确认当前任务进程"
+  IFS= read -r current_boot < /proc/sys/kernel/random/boot_id
+  # Lock the stable /tmp directory inode: no persistent lock file and no
+  # unlink/recreate race. Never hold this lock while prompting or measuring.
+  exec {lock_fd}< /tmp
+  flock -x -w 30 "$lock_fd" || die "SQ 任务登记暂时繁忙，请稍后重试"
+  for record in /tmp/speedquality-active."$UID".*; do
+    [[ -d "$record" && ! -L "$record" && -O "$record" &&
+       -f "$record/owner" && ! -L "$record/owner" && -O "$record/owner" ]] || continue
+    IFS=' ' read -r pid start boot extra < "$record/owner" || continue
+    [[ -z "$extra" && "$boot" == "$current_boot" && "$start" =~ ^[0-9]+$ ]] || continue
+    if [[ "$(process_start "$pid" 2>/dev/null || true)" == "$start" ]]; then
+      conflict=1
+      break
+    fi
+  done
+  if ((conflict == 0 || ALLOW_PARALLEL == 1)); then
+    RUN_RECORD=$(mktemp -d "/tmp/speedquality-active.${UID}.XXXXXX")
+    printf '%s %s %s\n' "$RUN_PID" "$current_start" "$current_boot" > "$RUN_RECORD/owner"
+  fi
+  flock -u "$lock_fd"
+  exec {lock_fd}<&-
+  ((conflict == 1)) || return 0
+  if ((announce == 1)); then
+    warn "检测到另一个SQ测速任务正在运行。"
+    printf '    同时测速会共享本机带宽，可能影响测速结果。\n' >&2
+    printf '    平台动态调度仍限制同一来源IP同时一个任务。\n' >&2
+  fi
+  if ((ALLOW_PARALLEL == 1)); then
+    return 0
+  fi
+  [[ -t 0 ]] || die "非交互运行已停止；如需并行，请添加 --allow-parallel"
+  while true; do
+    printf '\n是否继续并行测速？[y/N]: ' >&2
+    IFS= read -r answer || answer=""
+    case "${answer,,}" in
+      y|yes) ALLOW_PARALLEL=1; break ;;
+      ""|n|no) info "已取消本次测速"; exit 0 ;;
+      *) printf '请输入 y 或 n，直接回车取消。\n' >&2 ;;
+    esac
+  done
+  # Recheck/register under the lock, but do not ask twice.
+  register_run 0
+}
+
+run_probe_logged() {
+  local result=0 fifo="$TEMP_DIR/probe-output.pipe"
+  mkfifo -m 600 "$fifo" || return $?
+  tee -a "$SPEED_LOG" < "$fifo" &
+  TEE_PID=$!
+  SPEEDQUALITY_NQ_BINDING_ENABLED="$NODEQUALITY_BINDING_ENABLED" \
+    SPEEDQUALITY_TIP_STATE_FILE="$TEMP_DIR/progress-tip.json" \
+    "$PROBE_BINARY" "$@" > "$fifo" &
+  PROBE_PID=$!
+  wait "$PROBE_PID" || result=$?
+  PROBE_PID=""
+  wait "$TEE_PID" || true
+  TEE_PID=""
+  rm -f -- "$fifo"
+  return "$result"
+}
 
 require_value() {
   local option="$1"
@@ -820,6 +924,10 @@ parse_args() {
         NODE_ROUTE_KEY="${1#*=}"
         shift
         ;;
+      --allow-parallel)
+        ALLOW_PARALLEL=1
+        shift
+        ;;
       --nodequality|--nodequality=*|--with-nodequality|--nodequality-arg|--nodequality-arg=*|--max-time-gap|--max-time-gap=*|--result|--result=*|--no-result-file|--speed-result|--speed-result=*)
         die "参数 $1 已移除；NodeQuality 请使用 --nq URL，结果默认直接生成展示链接"
         ;;
@@ -1151,8 +1259,21 @@ sha256_file() {
 download_file() {
   local url="$1"
   local destination="$2"
-  curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --connect-timeout 15 --max-time 180 \
-    "$url" -o "$destination"
+  local stage="$3" status=0 http_code reason
+  http_code=$(curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --connect-timeout 15 --max-time 180 \
+    --write-out '%{http_code}' "$url" -o "$destination") || status=$?
+  ((status != 0)) || return 0
+  case "$status" in
+    5|6) reason="下载源域名解析失败" ;;
+    7) reason="无法连接下载源" ;;
+    22) reason="下载源返回 HTTP ${http_code:-错误}" ;;
+    23) reason="无法写入文件，请检查磁盘空间和目录权限" ;;
+    28) reason="连接或下载超时" ;;
+    35|51|60) reason="HTTPS 连接或证书校验失败" ;;
+    *) reason="网络传输失败（curl 错误码 $status）" ;;
+  esac
+  warn "$stage：$reason；测速尚未开始，请稍后重试"
+  return "$status"
 }
 
 platform_arch() {
@@ -1174,7 +1295,7 @@ release_sha256() {
   local sums_file="$TEMP_DIR/sha256sums.txt"
   local expected
 
-  download_file "${PROBE_BASE%/}/checksums.txt" "$sums_file" \
+  download_file "${PROBE_BASE%/}/checksums.txt" "$sums_file" "校验文件下载失败（$PROBE_VERSION）" \
     || die "无法下载 ${PROBE_VERSION} 的校验文件"
   expected=$(awk -v asset="$asset" '$2 == asset || $2 == "*" asset { print $1; exit }' "$sums_file")
   [[ "$expected" =~ ^[A-Fa-f0-9]{64}$ ]] || die "校验文件中没有找到 $asset"
@@ -1198,13 +1319,12 @@ resolve_probe_binary() {
   local arch
   local asset
   local expected
-  local cached
   local staged
   local actual
 
   if [[ -n "$supplied" ]]; then
     [[ -f "$supplied" && -x "$supplied" ]] || die "SPEEDQUALITY_PROBE_BIN 不可执行: $supplied"
-    printf '%s\n' "$supplied"
+    PROBE_BINARY="$supplied"
     return 0
   fi
 
@@ -1217,30 +1337,20 @@ resolve_probe_binary() {
   fi
   validate_https_url "$PROBE_BASE" || die "探测器下载地址无效"
 
-  arch=$(platform_arch)
+  arch=$(platform_arch) || return $?
   asset="sqprobe-linux-${arch}"
-  expected=$(resolve_expected_sha256 "$asset")
-  cached="${CACHE_DIR}/${PROBE_VERSION}/${asset}"
-
-  if [[ -x "$cached" ]]; then
-    actual=$(sha256_file "$cached")
-    if [[ "${actual,,}" == "$expected" ]]; then
-      printf '%s\n' "$cached"
-      return 0
-    fi
-    warn "缓存中的测速程序校验失败，将重新下载"
-  fi
-
-  mkdir -p -- "$(dirname -- "$cached")"
+  expected=$(resolve_expected_sha256 "$asset") || return $?
   staged="$TEMP_DIR/$asset"
-  download_file "${PROBE_BASE%/}/${asset}" "$staged" \
+  download_file "${PROBE_BASE%/}/${asset}" "$staged" "测速程序下载失败（$PROBE_VERSION/$arch）" \
     || die "测速程序下载失败"
-  actual=$(sha256_file "$staged")
+  actual=$(sha256_file "$staged") || return $?
   [[ "${actual,,}" == "$expected" ]] \
-    || die "测速程序 SHA-256 校验失败（期望 $expected，实际 ${actual,,}）"
+    || die "测速程序 SHA-256 校验失败，测速尚未开始（期望 $expected，实际 ${actual,,}）"
   chmod 0755 "$staged"
-  mv -f -- "$staged" "$cached"
-  printf '%s\n' "$cached"
+  "$staged" --version >/dev/null \
+    || die "测速程序无法执行，测速尚未开始；请检查架构或用 TMPDIR 指定允许执行的临时目录"
+  PROBE_BINARY="$staged"
+  OWNED_PROBE=1
 }
 
 detect_traffic_interfaces() {
@@ -1524,7 +1634,7 @@ run_speedtest() {
   if [[ -n "$TRAFFIC_INTERFACES" ]]; then
     traffic_before=$(read_network_counters || true)
   fi
-  PROBE_BINARY=$(resolve_probe_binary)
+  resolve_probe_binary
   create_speed_session
   SPEED_LOG="$TEMP_DIR/speedquality.log"
   SPEED_DATA_FILE="$TEMP_DIR/speedquality-results.ndjson"
@@ -1554,13 +1664,11 @@ run_speedtest() {
     [[ -z "$SESSION_TOKEN_V4" ]] || session_args+=(--session-v4-file "$token_file_v4")
     [[ -z "$SESSION_TOKEN_V6" ]] || session_args+=(--session-v6-file "$token_file_v6")
     set +e
-    SPEEDQUALITY_NQ_BINDING_ENABLED="$NODEQUALITY_BINDING_ENABLED" \
-      SPEEDQUALITY_TIP_STATE_FILE="$TEMP_DIR/progress-tip.json" \
-      "$PROBE_BINARY" schedule --base "$REPORT_BASE" --regions "$SELECTED_REGION_CODES" \
+    run_probe_logged schedule --base "$REPORT_BASE" --regions "$SELECTED_REGION_CODES" \
       --names "$SELECTED_POINTS" --families "$task_families" --carriers "$task_carriers" \
       --speed "$SPEED_TARGET_MBPS" --output "$SPEED_DATA_FILE" \
-      --reference-time "$(measurement_epoch)" "${session_args[@]}" "${diagnostic_args[@]}" | tee -a "$SPEED_LOG"
-    status=${PIPESTATUS[0]}
+      --reference-time "$(measurement_epoch)" "${session_args[@]}" "${diagnostic_args[@]}"
+    status=$?
     set -e
     finish_traffic_measurement "$traffic_before"
     ((status == 0)) || exit "$status"
@@ -1585,11 +1693,9 @@ run_speedtest() {
           continue
         fi
         set +e
-        SPEEDQUALITY_NQ_BINDING_ENABLED="$NODEQUALITY_BINDING_ENABLED" \
-          SPEEDQUALITY_TIP_STATE_FILE="$TEMP_DIR/progress-tip.json" \
-          "$PROBE_BINARY" --lease "$lease_file" --output "$attempt_result" \
-          --reference-time "$(measurement_epoch)" "${diagnostic_args[@]}" | tee -a "$SPEED_LOG"
-        status=${PIPESTATUS[0]}
+        run_probe_logged --lease "$lease_file" --output "$attempt_result" \
+          --reference-time "$(measurement_epoch)" "${diagnostic_args[@]}"
+        status=$?
         set -e
         if ((status == 0)); then
           cat "$attempt_result" >> "$SPEED_DATA_FILE"
@@ -1743,6 +1849,7 @@ main() {
 
   TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/speedquality.XXXXXX")
   : > "$TEMP_DIR/$TEMP_MARKER_NAME"
+  register_run
   prepare_speed_selection
 
   if [[ -n "$NODEQUALITY_URL" ]]; then

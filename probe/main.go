@@ -23,6 +23,13 @@ const (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "cache-clean" {
+		if err := runCacheClean(os.Args[2:], os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, "[!] 历史缓存暂未清理：", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "schedule" {
 		if err := runScheduledCommand(os.Args[2:], os.Stdout, os.Stderr); err != nil && err != flag.ErrHelp {
 			fmt.Fprintf(os.Stderr, "[X] %v\n", err)

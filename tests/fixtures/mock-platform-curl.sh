@@ -78,9 +78,17 @@ case "$url" in
     printf '{"version":1,"epoch":%s}\n' "${MOCK_PLATFORM_EPOCH:-$(date +%s)}" > "$output_file"
     ;;
   */checksums.txt)
+    printf 'download-checksums\n' >> "$MOCK_PLATFORM_LOG"
+    [[ "${MOCK_CHECKSUM_DOWNLOAD_EXIT:-0}" == 0 ]] || exit "$MOCK_CHECKSUM_DOWNLOAD_EXIT"
     cp -- "${MOCK_PLATFORM_CHECKSUMS_FILE:?}" "$output_file"
     ;;
   */sqprobe-linux-amd64|*/sqprobe-linux-arm64)
+    printf 'download-probe\n' >> "$MOCK_PLATFORM_LOG"
+    if [[ "${MOCK_PROBE_DOWNLOAD_EXIT:-0}" != 0 ]]; then
+      printf 'partial' > "$output_file"
+      printf '%s' "${MOCK_PROBE_DOWNLOAD_HTTP:-000}"
+      exit "$MOCK_PROBE_DOWNLOAD_EXIT"
+    fi
     cp -- "${MOCK_PLATFORM_PROBE_SOURCE:?}" "$output_file"
     if [[ -n "${MOCK_DOWNLOAD_NETDEV_FILE:-}" ]]; then
       cat > "$MOCK_DOWNLOAD_NETDEV_FILE" <<EOF

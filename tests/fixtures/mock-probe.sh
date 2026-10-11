@@ -2,8 +2,20 @@
 
 set -euo pipefail
 
-if [[ "${1:-}" == "nq-verify" ]]; then
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'sqprobe fixture\n'
+  exit 0
+fi
+
+if [[ "${1:-}" == "nq-verify" || "${1:-}" == "cache-clean" ]]; then
   exec "${SPEEDQUALITY_NQ_VERIFY_BIN:?}" "$@"
+fi
+
+if [[ -n "${MOCK_PROBE_STARTED_FILE:-}" ]]; then
+  printf '%s\n' "$0" > "$MOCK_PROBE_STARTED_FILE"
+fi
+if [[ -n "${MOCK_PROBE_WAIT_FIFO:-}" ]]; then
+  IFS= read -r _ < "$MOCK_PROBE_WAIT_FIFO" || true
 fi
 
 lease=""
