@@ -2312,6 +2312,53 @@ function reportLinkLines(nodeQualityUrl, reportUrl) {
   return links.join("\n");
 }
 
+function reportVerificationNotice(report) {
+  if (!report.nq_url && !REJECTED_BIND_STATUSES.has(report.bind_status)) return null;
+  const identityMatch = report.nq_identity_reason === "full_ip"
+    ? "NodeQuality 与本次测速的完整 IP 一致"
+    : report.nq_identity_reason === "masked_ip_and_asn"
+      ? "NodeQuality 的脱敏 IP 网段与本次测速匹配，且 ASN 一致"
+      : "NodeQuality 与本次测速的服务器身份信息匹配";
+  switch (report.bind_status) {
+    case "verified":
+      return {
+        heading: "服务器身份与时间均已校验",
+        message: `${identityMatch}，检测时间相差 ${formatGap(report.time_gap_seconds)}。`,
+        level: "ok",
+      };
+    case "verified_stale":
+      return {
+        heading: "服务器身份已校验，检测时间差较大",
+        message: `${identityMatch}；两次检测相差 ${formatGap(report.time_gap_seconds)}，超过 60 分钟。`,
+        level: "warning",
+      };
+    case "verified_time_unknown":
+      return {
+        heading: "服务器身份已校验，时间无法确认",
+        message: `${identityMatch}；无法确认两次检测的时间差，请结合原报告时间判断。`,
+        level: "warning",
+      };
+    case "mismatch":
+      return {
+        heading: "服务器身份校验未通过",
+        message: "NodeQuality 与本次测速的服务器身份不一致，已拒绝绑定；本页仅展示 SpeedQuality 结果。",
+        level: "danger",
+      };
+    case "unverified":
+      return {
+        heading: "NodeQuality 报告无法校验",
+        message: "无法读取、解析或取得足够的服务器身份信息，已拒绝绑定；本页仅展示 SpeedQuality 结果。",
+        level: "danger",
+      };
+    default:
+      return {
+        heading: "NodeQuality 关联校验信息缺失",
+        message: "此报告未保存完整的关联校验信息，请结合原始报告判断。",
+        level: "warning",
+      };
+  }
+}
+
 function reportDownloadBaseName(report) {
   const regions = stripUnsafeTerminalText(report.regions)
     .replace(/[^A-Za-z0-9\u3400-\u9fff]+/g, "-").slice(0, 40)
@@ -2350,8 +2397,13 @@ export function formatReportCopies(report, options = {}) {
     colored: true,
     reportUrl,
   });
-  const speedPlainMaterial = [headerText, speedText, trafficText].filter(Boolean).join("\n\n");
-  const speedAnsiMaterial = [headerAnsi, speedAnsi, trafficAnsiText].filter(Boolean).join("\n\n");
+  const verification = reportVerificationNotice(report);
+  const verificationText = verification
+    ? `关联校验：${verification.heading}\n${verification.message}` : "";
+  const verificationAnsi = verification
+    ? ansiText(verificationText, { ok: "92", warning: "33", danger: "1;91" }[verification.level], true) : "";
+  const speedPlainMaterial = [headerText, verificationText, speedText, trafficText].filter(Boolean).join("\n\n");
+  const speedAnsiMaterial = [headerAnsi, verificationAnsi, speedAnsi, trafficAnsiText].filter(Boolean).join("\n\n");
   const nodeQuality = nodeQualityCopyPages(options.snapshot);
   const links = reportLinkLines(nodeQualityUrl, reportUrl);
 
@@ -2384,7 +2436,7 @@ export function formatReportCopies(report, options = {}) {
   }
   const speedUrl = normalizeHttpsUrl(report.speed_url, 2048);
   const speedMarkdown = speedUrl
-    ? `![SpeedQuality 测速结果](${speedUrl})`
+    ? [verificationText ? markdownCodeBlock(verificationText) : "", `![SpeedQuality 测速结果](${speedUrl})`].filter(Boolean).join("\n\n")
     : markdownCodeBlock(speedPlainMaterial);
   markdown.push(`# 速度质量\n${speedMarkdown}`);
   if (links) markdown.push(links);
@@ -2453,33 +2505,7 @@ export function renderReport(report, options = {}) {
   const speedTabIndex = tabs.findIndex((tab) => tab.key === "sq");
   const speedTabHref = tabHref(tabs[speedTabIndex], speedTabIndex);
 
-  const identityMatch = report.nq_identity_reason === "full_ip"
-    ? "NodeQuality 与本次测速的完整 IP 一致"
-    : report.nq_identity_reason === "masked_ip_and_asn"
-      ? "NodeQuality 的脱敏 IP 网段与本次测速匹配，且 ASN 一致"
-      : "NodeQuality 与本次测速的服务器身份信息匹配";
-  let verification = "服务器身份与时间均已校验";
-  let noticeClass = "ok";
-  let notice = "";
-  if (report.bind_status === "verified") {
-    notice = `${identityMatch}，检测时间相差 ${formatGap(report.time_gap_seconds)}。`;
-  } else if (report.bind_status === "verified_stale") {
-    verification = "服务器身份已校验，检测时间差较大";
-    noticeClass = "warning";
-    notice = `${identityMatch}；两次检测相差 ${formatGap(report.time_gap_seconds)}，超过 60 分钟。`;
-  } else if (report.bind_status === "verified_time_unknown") {
-    verification = "服务器身份已校验，时间无法确认";
-    noticeClass = "warning";
-    notice = `${identityMatch}；无法确认两次检测的时间差，请结合原报告时间判断。`;
-  } else if (report.bind_status === "mismatch") {
-    verification = "服务器身份校验未通过";
-    noticeClass = "danger";
-    notice = "NodeQuality 与本次测速的服务器身份不一致，已拒绝绑定；本页仅展示 SpeedQuality 结果。";
-  } else if (report.bind_status === "unverified") {
-    verification = "NodeQuality 报告无法校验";
-    noticeClass = "danger";
-    notice = "无法读取、解析或取得足够的服务器身份信息，已拒绝绑定；本页仅展示 SpeedQuality 结果。";
-  }
+  const verification = reportVerificationNotice(report);
 
   const tabsHtml = tabs.map((tab, index) => `
       <a href="${escapeHtml(tabHref(tab, index))}"${tab.key === activeTab ? ' aria-current="page"' : ""}>${escapeHtml(tab.label)}</a>`).join("");
@@ -2583,8 +2609,8 @@ export function renderReport(report, options = {}) {
   const tabsShell = showTabs ? `
   <div class="tabs-shell"><nav aria-label="报告分页">${tabsHtml}
   </nav></div>` : "";
-  const noticeHtml = isSpeedPage && (hasNodeQuality || REJECTED_BIND_STATUSES.has(report.bind_status))
-    ? `<p class="notice ${noticeClass}"><strong>${escapeHtml(verification)}</strong>　${escapeHtml(notice)}</p>`
+  const noticeHtml = isSpeedPage && verification
+    ? `<p class="notice ${verification.level}"><strong>${escapeHtml(verification.heading)}</strong>　${escapeHtml(verification.message)}</p>`
     : "";
   const canonicalReportUrl = normalizeHttpsUrl(options.reportUrl, 2048) || reportPath;
   const promotionHtml = isSpeedPage && promotionText ? `

@@ -1383,6 +1383,93 @@ test("report copy formats support plain text, NodeSeek, and general Markdown", (
   assert.match(copies.markdown, /<\/textarea>/);
 });
 
+test("report exports retain identity and time verification in every format", () => {
+  const cases = [
+    {
+      status: "verified", reason: "full_ip", gap: 60, color: "92",
+      heading: "服务器身份与时间均已校验",
+      details: ["完整 IP 一致", "检测时间相差 1 分钟"],
+    },
+    {
+      status: "verified", reason: "masked_ip_and_asn", gap: 3600, color: "92",
+      heading: "服务器身份与时间均已校验",
+      details: ["脱敏 IP 网段与本次测速匹配，且 ASN 一致", "检测时间相差 1 小时 0 分钟"],
+    },
+    {
+      status: "verified_stale", reason: "masked_ip_and_asn", gap: 18 * 86400 + 14 * 3600, color: "33",
+      heading: "服务器身份已校验，检测时间差较大",
+      details: ["脱敏 IP 网段与本次测速匹配，且 ASN 一致", "两次检测相差 18 天 14 小时，超过 60 分钟"],
+    },
+    {
+      status: "verified_time_unknown", reason: "full_ip", gap: null, color: "33",
+      heading: "服务器身份已校验，时间无法确认",
+      details: ["完整 IP 一致", "无法确认两次检测的时间差"],
+    },
+    {
+      status: "mismatch", rejected: true, color: "1;91",
+      heading: "服务器身份校验未通过",
+      details: ["服务器身份不一致，已拒绝绑定", "仅展示 SpeedQuality 结果"],
+    },
+    {
+      status: "unverified", rejected: true, color: "1;91",
+      heading: "NodeQuality 报告无法校验",
+      details: ["无法读取、解析或取得足够的服务器身份信息，已拒绝绑定"],
+    },
+    {
+      status: "", color: "33",
+      heading: "NodeQuality 关联校验信息缺失",
+      details: ["此报告未保存完整的关联校验信息"],
+    },
+  ];
+  const snapshot = { pages: ["基本信息", "IP质量", "网络质量", "回程路由"].map((title, index) => ({
+    id: `page-${index}`, title, format: "ansi", content: `\u001b[36m${title}原始内容\u001b[0m`,
+  })) };
+  for (const entry of cases) {
+    for (const speedUrl of ["", "https://images.example/speed.webp"]) {
+      const report = {
+        id: "CopyDemo1234", tested_at: 1780000000, source_ip_masked: "203.0.*.*",
+        speed_text: "湖北电信 200Mbps ✓", target_mbps: 200,
+        nq_url: entry.rejected ? "" : "https://nodequality.com/r/TestReport",
+        bind_status: entry.status, nq_identity_reason: entry.reason,
+        time_gap_seconds: entry.gap, speed_url: speedUrl,
+      };
+      const options = { snapshot, reportUrl: "https://sq.example/r/CopyDemo1234", tab: "sq" };
+      const copies = formatReportCopies(report, options);
+      const html = renderReport(report, options);
+      const visibleNotice = html.match(/<p class="notice [^"]+">([\s\S]*?)<\/p>/)?.[1];
+      assert.ok(visibleNotice?.includes(entry.heading), entry.status);
+      for (const [format, copy] of Object.entries(copies)) {
+        assert.equal(copy.split(`关联校验：${entry.heading}`).length - 1, 1, `${entry.status}: ${format}`);
+        for (const detail of entry.details) {
+          assert.ok(copy.includes(detail), `${entry.status}: ${format}: ${detail}`);
+          assert.ok(visibleNotice.includes(detail), `${entry.status}: webpage: ${detail}`);
+        }
+        if (entry.status !== "verified") assert.doesNotMatch(copy, /身份与时间均已校验/);
+      }
+      assert.ok(copies.nodeseek.includes(`\u001b[${entry.color}m关联校验：`));
+      assert.doesNotMatch(copies.text + copies.markdown, /\u001b/);
+      assert.deepEqual([...copies.nodeseek.matchAll(/^::: tab-item (.+)$/gm)].map((match) => match[1]),
+        entry.rejected ? ["速度质量"] : ["基本信息", "IP质量", "网络质量", "回程路由", "速度质量"]);
+      const speedTab = copies.nodeseek.indexOf("::: tab-item 速度质量");
+      assert.ok(copies.nodeseek.indexOf("关联校验：") > speedTab);
+      assert.ok(copies.nodeseek.indexOf("关联校验：") < copies.nodeseek.indexOf("湖北电信"));
+      if (!entry.rejected) {
+        for (const page of snapshot.pages) assert.ok(copies.nodeseek.includes(page.content));
+      }
+      if (speedUrl) assert.ok(copies.markdown.includes(`![SpeedQuality 测速结果](${speedUrl})`));
+    }
+  }
+});
+
+test("standalone report exports do not claim NodeQuality verification", () => {
+  const report = { id: "CopyDemo1234", bind_status: "standalone", speed_text: "湖北电信 200Mbps ✓" };
+  for (const copy of Object.values(formatReportCopies(report))) {
+    assert.match(copy, /湖北电信 200Mbps ✓/);
+    assert.doesNotMatch(copy, /关联校验|身份.*校验|NodeQuality/);
+  }
+  assert.doesNotMatch(renderReport(report), /<p class="notice /);
+});
+
 test("share metadata and image summary preserve metric states, scope and privacy", () => {
   const speed = JSON.parse(structuredSpeedData());
   speed.results[0].latency_ms = 41;
@@ -1915,7 +2002,7 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
   assert.ok(nqReportContainer < nqBottomCopyActions);
   assert.match(page, /navigator\.clipboard/);
   assert.doesNotMatch(page, /今日速度检测量/);
-  assert.doesNotMatch(page, /服务器身份与时间均已校验/);
+  assert.doesNotMatch(page, /<p class="notice /);
   assert.doesNotMatch(page, /报告将在/);
   assert.doesNotMatch(page, /<div class="sq-report-intro">/);
 

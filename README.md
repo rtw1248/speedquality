@@ -191,6 +191,9 @@ bash <(curl -fsSL https://sq.yolo2.cc/run) --list-provinces
 原有分页和内容，只在最后增加“速度质量”页，并保留 NodeQuality 原始报告链接。该功能不代表
 SpeedQuality 与 NodeQuality 存在官方合作关系。
 
+复制文本、NodeSeek 格式和通用 Markdown 均保留“速度质量”部分的关联校验结果，包括身份
+匹配依据、时间差提醒或关联失败原因。导出顺序与网页一致，NodeQuality 原有分页内容不变。
+
 身份、时间和快照解析都由 `sqprobe` 完成，测速服务器不需要 Python、pip 或虚拟环境。
 
 ## 提供测速节点
