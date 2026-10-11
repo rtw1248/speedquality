@@ -1148,6 +1148,83 @@ test("run endpoint injects its origin, version, and feature availability", async
   }
 });
 
+test("run entry serves a browser guide without fetching scripts, and keeps curl responses plain", async () => {
+  let upstreamRequests = 0;
+  const env = {
+    GITHUB_OWNER: "owner", GITHUB_REPO: "speedquality", GITHUB_REF: "v1.2.0",
+    PROBE_VERSION: "v1.2.0", NQ_BINDING_ENABLED: "true",
+    ASSET_SOURCE: { async fetch() {
+      upstreamRequests++;
+      return new Response('#!/usr/bin/env bash\nREPORT_BASE="__SPEEDQUALITY_REPORT_BASE__"\n');
+    } },
+  };
+  const cases = [
+    [{ accept: "*/*", "user-agent": "curl/8.0" }, false],
+    [{ accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }, true],
+    [{ accept: "*/*", "user-agent": "Wget/1.21" }, false],
+    [{ accept: "text/html" }, true],
+    [{ "user-agent": "Mozilla/5.0" }, false],
+    [{ accept: "text/html;q=0,*/*;q=1" }, false],
+    [{ accept: "text/html;q=0.5,text/plain" }, false],
+  ];
+  for (const [headers, browser] of cases) {
+    const before = upstreamRequests;
+    const response = await worker.fetch(new Request("https://rtw.example/run?node=private-value", { headers }), env);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("cdn-cache-control"), "no-store");
+    assert.equal(response.headers.get("vary"), "Accept");
+    const body = await response.text();
+    if (browser) {
+      assert.match(response.headers.get("content-type"), /^text\/html/);
+      assert.match(body, /请在VPS终端执行/);
+      assert.match(body, /bash &lt;\(curl -fsSL https:\/\/rtw\.example\/run\)/);
+      assert.match(body, /href="https:\/\/github\.com\/owner\/speedquality"/);
+      assert.match(body, /--nq 报告链接/);
+      assert.doesNotMatch(body, /private-value/);
+      const nonce = body.match(/<script nonce="([A-Za-z0-9_-]+)">/)[1];
+      assert.ok(response.headers.get("content-security-policy").includes(`script-src 'nonce-${nonce}'`));
+      assert.equal(upstreamRequests, before);
+    } else {
+      assert.match(response.headers.get("content-type"), /^text\/plain/);
+      assert.equal(body, '#!/usr/bin/env bash\nREPORT_BASE="https://rtw.example"\n');
+      assert.equal(upstreamRequests, before + 1);
+    }
+  }
+  const head = await worker.fetch(new Request("https://rtw.example/run", { method: "HEAD", headers: { accept: "text/html" } }), env);
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), "");
+  assert.match(head.headers.get("content-type"), /^text\/html/);
+  assert.equal(head.headers.get("cache-control"), "no-store");
+  const disabled = await worker.fetch(new Request("https://rtw.example/run", { headers: { accept: "text/html" } }), { ...env, NQ_BINDING_ENABLED: "false" });
+  assert.doesNotMatch(await disabled.text(), /--nq/);
+});
+
+test("raw script endpoint stays plain for browsers and run failures cannot become cached HTML", async () => {
+  const env = {
+    GITHUB_OWNER: "owner", GITHUB_REPO: "speedquality", GITHUB_REF: "v1.2.0",
+    ASSET_SOURCE: { async fetch() { return new Response("#!/bin/bash\necho fixture\n"); } },
+  };
+  const raw = await worker.fetch(new Request("https://rtw.example/run.sh", { headers: { accept: "text/html" } }), env);
+  assert.match(raw.headers.get("content-type"), /^text\/plain/);
+  assert.equal(await raw.text(), "#!/bin/bash\necho fixture\n");
+  assert.match(raw.headers.get("cache-control"), /public/);
+  for (const method of ["GET", "HEAD"]) {
+    const failure = await worker.fetch(new Request("https://rtw.example/run", { method }), {
+      ...env, ASSET_SOURCE: { async fetch() { throw new Error("fixture unavailable"); } },
+    });
+    assert.equal(failure.status, 502);
+    assert.match(failure.headers.get("content-type"), /^text\/plain/);
+    assert.equal(failure.headers.get("cache-control"), "no-store");
+    assert.equal(failure.headers.get("cdn-cache-control"), "no-store");
+    assert.equal(failure.headers.get("vary"), "Accept");
+  }
+  const post = await worker.fetch(new Request("https://rtw.example/run", { method: "POST", headers: { accept: "text/html" } }), env);
+  assert.equal(post.status, 405);
+  assert.equal(post.headers.get("allow"), "GET, HEAD");
+  assert.equal(post.headers.get("cache-control"), "no-store");
+});
+
 test("node installer endpoint injects its origin and release version", async () => {
   const originalFetch = globalThis.fetch;
   let requested = "";

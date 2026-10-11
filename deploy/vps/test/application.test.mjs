@@ -35,6 +35,29 @@ async function submit(t, app, { nq = false, headers = {} } = {}) {
   return (await result.text()).trim();
 }
 
+test("VPS run entry separates browser instructions from the executable script", async (t) => {
+  const app = await start(t, config(temporary(t)));
+  for (const accept of ["text/html", "*/*", "text/html", "text/plain"]) {
+    const response = await fetch(app.url + "/run", { headers: { accept } });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("cdn-cache-control"), "no-store");
+    assert.equal(response.headers.get("vary"), "Accept");
+    const body = await response.text();
+    if (accept === "text/html") {
+      assert.match(response.headers.get("content-type"), /^text\/html/);
+      assert.match(body, /请在VPS终端执行/);
+      assert.match(body, /bash &lt;\(curl -fsSL https:\/\/sq\.example\/run\)/);
+    } else {
+      assert.match(response.headers.get("content-type"), /^text\/plain/);
+      assert.ok(body.startsWith("#!/usr/bin/env bash\n"));
+      assert.doesNotMatch(body, /__SPEEDQUALITY_REPORT_BASE__/);
+    }
+  }
+  const source = await fetch(app.url + "/run.sh", { headers: { accept: "text/html" } });
+  assert.ok((await source.text()).startsWith("#!/usr/bin/env bash\n"));
+});
+
 test("HTTP session, lease and NQ report survive restart, D1 migration and backup/restore", async (t) => {
   const dir = temporary(t), publicDir = join(dir, "public");
   const app = await start(t, config(publicDir));

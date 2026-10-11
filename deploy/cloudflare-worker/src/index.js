@@ -1,5 +1,6 @@
 import { logEvent, requestID, routeLabel } from "./observability.js";
 import { reportImageResponse } from "./report-image-cache.js";
+import { prefersRunPage, renderRunPage } from "./run-page.js";
 
 const SCRIPT_MARKER = "__SPEEDQUALITY_REPORT_BASE__";
 const PROBE_VERSION_MARKER = "__SPEEDQUALITY_PROBE_VERSION__";
@@ -2940,6 +2941,30 @@ function serveScript(request, env) {
   return serveRepositoryScript(request, env, "run.sh", "SpeedQuality script");
 }
 
+async function serveRunEntry(request, env) {
+  let response;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    response = textResponse("Method Not Allowed\n", 405, { allow: "GET, HEAD" });
+  } else if (prefersRunPage(request)) {
+    const scriptNonce = `${randomId()}${randomId()}`;
+    response = htmlResponse(request.method === "HEAD" ? null : renderRunPage({
+      origin: new URL(request.url).origin,
+      projectUrl: reportPromotion(env).projectUrl,
+      nqEnabled: nodeQualityBindingEnabled(env),
+      scriptNonce,
+    }), 200, { "content-security-policy": reportContentSecurityPolicy(scriptNonce) });
+  } else {
+    response = await serveScript(request, env);
+  }
+  // Cloudflare does not generally key its cache by arbitrary Vary headers.
+  // Bypass caches for both representations; upstream raw script caching remains.
+  const output = new Response(response.body, response);
+  output.headers.set("cache-control", "no-store");
+  output.headers.set("cdn-cache-control", "no-store");
+  output.headers.set("vary", "Accept");
+  return output;
+}
+
 function serveNodeInstaller(request, env) {
   return serveRepositoryScript(request, env, "install-node.sh", "sq-node installer");
 }
@@ -3030,7 +3055,9 @@ async function routeRequest(request, env, context) {
     });
   }
 
-  if (url.pathname === "/run" || url.pathname === "/run.sh") {
+  if (url.pathname === "/run") return serveRunEntry(request, env);
+
+  if (url.pathname === "/run.sh") {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return textResponse("Method Not Allowed\n", 405, { allow: "GET, HEAD" });
     }

@@ -14,6 +14,9 @@ SpeedQuality 是面向 Linux 服务器的分省单线程测速工具。它可以
 
 Linux `amd64` 和 `arm64`：
 
+通过 SSH 登录 VPS，在终端执行下面的命令。浏览器直接打开 [/run](https://sq.yolo2.cc/run)
+会显示使用指南和复制按钮；测速完成后生成的报告链接可以直接用浏览器查看。
+
 ```bash
 # bash / zsh
 bash <(curl -fsSL https://sq.yolo2.cc/run)

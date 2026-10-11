@@ -4,7 +4,8 @@
 
 | 路径 | 作用 |
 | --- | --- |
-| `GET /run` | 返回注入当前服务域名的一键 Bash 脚本 |
+| `GET /run` | 浏览器显示使用指南和复制按钮；curl/wget 返回注入当前服务域名的一键 Bash 脚本 |
+| `GET /run.sh` | 始终返回一键 Bash 脚本，可在浏览器查看源码 |
 | `GET /install-node` | 返回注入当前服务域名和版本的节点安装器 |
 | `GET /bin/<version>/<asset>` | 代理指定版本的二进制、校验清单和签名发布清单 |
 | `GET /api/nodes/detect` | 返回节点安装请求的公网地址、地区和运营商候选 |
@@ -23,6 +24,12 @@
 | `POST /api/nodes/resolve` | 用 Route Key 解析可用节点约束 |
 | `GET /r/<id>` | 展示联合报告 |
 | `GET /health` | 检查 D1、R2 和节点来源配置 |
+
+`/run` 根据 `Accept` 请求头区分浏览器页面与脚本，只有明确接受 `text/html` 且其优先级不低于
+`text/plain` 时返回页面；不依赖 User-Agent。未提供该请求头或只接受 `*/*` 时继续返回脚本。
+两种响应均设置 `Cache-Control: no-store`、`CDN-Cache-Control: no-store` 和 `Vary: Accept`，
+避免 CDN 或浏览器把网页内容提供给 Bash。不要为 `/run` 配置强制缓存规则；上游 GitHub
+原始脚本仍单独缓存，`/run.sh` 继续使用原有缓存。该行为同样适用于 VPS 部署。
 
 ## 1. 配置节点来源
 
