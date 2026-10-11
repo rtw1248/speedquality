@@ -63,12 +63,13 @@ sudo journalctl -u speedquality-node.service -o cat -n 200
 
 ## Worker 与 Core
 
-两个 Worker 的 `wrangler.toml` 默认设置 `LOG_LEVEL = "info"`。实时查看：
+两个 Worker 默认设置 `LOG_LEVEL = "info"`。公开 Worker 使用本机的 `wrangler.local.toml`，
+私有 Core 使用其仓库中的配置。实时查看：
 
 在公开仓库根目录执行：
 
 ```bash
-(cd deploy/cloudflare-worker && npx wrangler tail --format json)
+(cd deploy/cloudflare-worker && npx wrangler tail --config wrangler.local.toml --format json)
 (cd ../speedquality-node-core && npx wrangler tail --format json)
 ```
 

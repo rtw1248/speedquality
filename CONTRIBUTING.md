@@ -73,6 +73,8 @@ bash tests/test.sh
 
 - 不提交真实节点 IP、API Token、Route Key、Cloudflare ID、数据库导出、用户报告原文或
   Secret。
+- 文档中的本机路径应从仓库目录推导，或使用明确的占位符；不要写入真实用户名、个人目录或
+  SSH 服务器别名。实际部署配置保存在 Git 忽略的本地文件中，公开配置只提供模板。
 - 不在日志中新增完整客户端 IP、认证头、JWT、Cookie 或请求正文。
 - 保持 Bash 客户端可在项目声明支持的 Linux 环境运行，不依赖修改系统 Python。
 - Go 和 JavaScript 依赖应有明确用途，并提交对应锁文件变化。

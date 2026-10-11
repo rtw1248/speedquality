@@ -1,3 +1,5 @@
+# Public template. Copy to wrangler.local.toml and fill in your deployment values.
+# Never commit wrangler.local.toml; CI creates wrangler.deploy.toml from Actions variables.
 name = "speedquality"
 main = "src/index.js"
 compatibility_date = "2026-09-26"
@@ -28,7 +30,7 @@ service = "speedquality-node-core"
 [[d1_databases]]
 binding = "DB"
 database_name = "speedquality-results"
-database_id = "99c8aeec-9327-4624-a4be-990866515e99"
+database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
@@ -36,8 +38,8 @@ binding = "SNAPSHOTS"
 bucket_name = "speedquality-nodequality"
 
 # Required secrets:
-#   wrangler secret put RATE_LIMIT_SALT
+#   wrangler secret put RATE_LIMIT_SALT --config wrangler.local.toml
 # Self-hosted static mode:
-#   wrangler secret put STATIC_NODES
+#   wrangler secret put STATIC_NODES --config wrangler.local.toml
 # Dynamic Provider mode:
-#   wrangler secret put NODE_CORE_SECRET
+#   wrangler secret put NODE_CORE_SECRET --config wrangler.local.toml

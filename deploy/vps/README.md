@@ -79,13 +79,14 @@ ss -lnt
 
 ## 3. 上传发布代码并构建
 
-在开发电脑执行（两个仓库需已提交并更新到包含 Redis 支持的版本）：
+在开发电脑的公开仓库目录执行（两个仓库需已提交并更新到包含 Redis 支持的版本）。
+以下按两个仓库位于同一父目录编写；若私有仓库放在别处，请将 `SQ_CORE` 改为自己的实际路径：
 
 ```bash
 export SQ_SSH=你的服务器别名
 export SQ_RELEASE=vps-redis
-export SQ_ROOT=/home/demo/project/tool/speedquality
-export SQ_CORE=/home/demo/project/tool/speedquality-node-core
+export SQ_ROOT="$(git rev-parse --show-toplevel)"
+export SQ_CORE="$SQ_ROOT/../speedquality-node-core"
 ssh "$SQ_SSH" "install -d /opt/speedquality/releases/$SQ_RELEASE/public /opt/speedquality/releases/$SQ_RELEASE/core"
 git -C "$SQ_ROOT" archive HEAD | ssh "$SQ_SSH" "tar -xf - -C /opt/speedquality/releases/$SQ_RELEASE/public"
 git -C "$SQ_CORE" archive HEAD | ssh "$SQ_SSH" "tar -xf - -C /opt/speedquality/releases/$SQ_RELEASE/core"
@@ -231,7 +232,10 @@ JWT 是签名令牌，依然需要密钥；它不能取代密钥本身。私有 
 node deploy/vps/export-cloudflare.mjs --output deploy/vps/local/rehearsal
 ```
 
-工具使用本机 Wrangler 登录，只读取两个 D1 与 R2；输出 SQL、已验证的 SQLite，以及未过期 NQ 快照。会比较列、约束和索引，检查数据库完整性。只有带 `export-complete.json` 的目录是完整导出。失败时保留目录以供排查，重试使用新目录。示例数据库/桶名称与本项目默认名称一致，其他运营者需在脚本中修改。
+工具使用本机 Wrangler 登录，只读取两个 D1 与 R2；公开 Worker 默认读取不提交 Git 的
+`deploy/cloudflare-worker/wrangler.local.toml`，也可用 `--worker-config PATH` 指定自己的配置文件。
+首次配置见 [Worker 部署说明](../cloudflare-worker/README.md#2-配置公开-worker)，私有 Core 仍使用其仓库中的配置。
+输出 SQL、已验证的 SQLite，以及未过期 NQ 快照。会比较列、约束和索引，检查数据库完整性。只有带 `export-complete.json` 的目录是完整导出。失败时保留目录以供排查，重试使用新目录。示例数据库/桶名称与本项目默认名称一致，其他运营者需在脚本中修改。
 
 先把演练数据放在隔离目录启动 VPS，配置 `MAINTENANCE_MODE: "readonly"`。检查已有报告链接和 NQ 分页，确认 `/run`、发行包、Core 健康，不在生产数据库写入模拟结果。
 

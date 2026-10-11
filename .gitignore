@@ -10,3 +10,11 @@ deploy/cloudflare-worker/preview/*.html
 /probe/probe
 /deploy/vps/local/
 /deploy/vps/node_modules/
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+/deploy/cloudflare-worker/wrangler.local.toml
+/deploy/cloudflare-worker/wrangler.deploy.toml

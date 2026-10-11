@@ -9,16 +9,19 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const options = {};
 for (let i = 2; i < process.argv.length; i += 2) options[process.argv[i]] = process.argv[i + 1];
 if (!options["--output"]) {
-  console.log("用法: node deploy/vps/export-cloudflare.mjs --output NEW_DIR [--core-dir PRIVATE_REPO]\n只读取 Cloudflare。迁移必须先停止新会话并等待在途测试结束，再执行最终导出。\n使用两个仓库已安装的 Wrangler 和本机登录状态；不导出密钥。输出含 SQL、SQLite 和 NQ 快照。");
+  console.log("用法: node deploy/vps/export-cloudflare.mjs --output NEW_DIR [--core-dir PRIVATE_REPO] [--worker-config CONFIG]\n只读取 Cloudflare。迁移必须先停止新会话并等待在途测试结束，再执行最终导出。\n公开 Worker 默认读取 deploy/cloudflare-worker/wrangler.local.toml。使用两个仓库已安装的 Wrangler 和本机登录状态；不导出密钥。输出含 SQL、SQLite 和 NQ 快照。");
 } else {
   try {
     const destination = resolve(options["--output"]);
     if (existsSync(destination)) throw new Error("导出目录已存在，请使用新目录");
     const publicWorker = join(root, "deploy/cloudflare-worker");
+    const publicConfig = resolve(options["--worker-config"] || join(publicWorker, "wrangler.local.toml"));
+    if (!existsSync(publicConfig)) throw new Error("缺少公开 Worker 部署配置，请填写 wrangler.local.toml 或用 --worker-config 指定配置文件");
     const coreRepo = resolve(options["--core-dir"] || join(root, "../speedquality-node-core"));
     const wrangler = join(publicWorker, "node_modules/wrangler/bin/wrangler.js");
     const invoke = (cwd, args) => {
-      try { execFileSync(process.execPath, [wrangler, ...args], { cwd, stdio: ["ignore", "pipe", "pipe"], timeout: 180000, maxBuffer: 4 * 1024 * 1024 }); }
+      const configArgs = cwd === publicWorker ? ["--config", publicConfig] : [];
+      try { execFileSync(process.execPath, [wrangler, ...args, ...configArgs], { cwd, stdio: ["ignore", "pipe", "pipe"], timeout: 180000, maxBuffer: 4 * 1024 * 1024 }); }
       catch { throw new Error(`Wrangler ${args.slice(0, 2).join(" ")} 失败；请在对应目录运行 npx wrangler whoami 检查权限，导出目录可能不完整`); }
     };
     mkdirSync(destination, { recursive: true, mode: 0o700 });

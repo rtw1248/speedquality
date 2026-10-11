@@ -84,13 +84,17 @@ v1.2 的短队列需 Provider 实现 `POST /task` 合同，确认支持后设置
 cd deploy/cloudflare-worker
 npm install
 npx wrangler login
+cp -n wrangler.toml wrangler.local.toml
 ```
 
-修改 `wrangler.toml`：
+`wrangler.toml` 是公开模板，数据库 ID 为占位符。实际部署配置填写到 `wrangler.local.toml`，
+该文件已加入 Git 忽略规则。已有部署应保留当前真实配置，避免用模板覆盖。
+
+修改 `wrangler.local.toml`，将域名和 GitHub 账号替换为自己的值：
 
 ```toml
 name = "speedquality"
-routes = [{ pattern = "sq.yolo2.cc", custom_domain = true }]
+routes = [{ pattern = "sq.example.com", custom_domain = true }]
 
 [vars]
 GITHUB_OWNER = "YOUR_GITHUB_USER"
@@ -122,7 +126,7 @@ npx wrangler d1 create speedquality-results
 npx wrangler r2 bucket create speedquality-nodequality
 ```
 
-把返回的 D1 ID 填入 `wrangler.toml`，启用绑定：
+把返回的 D1 ID 填入 `wrangler.local.toml`，启用绑定：
 
 ```toml
 [[d1_databases]]
@@ -139,7 +143,7 @@ bucket_name = "speedquality-nodequality"
 项目尚未部署时，下面的命令只负责按编号依次创建初始空表：
 
 ```bash
-npx wrangler d1 migrations apply speedquality-results --remote
+npx wrangler d1 migrations apply speedquality-results --remote --config wrangler.local.toml
 ```
 
 当前会依次执行 `0001_results.sql`、`0002_community_node_sessions.sql`、
@@ -152,19 +156,19 @@ npx wrangler d1 migrations apply speedquality-results --remote
 ## 4. 设置 Secret
 
 ```bash
-npx wrangler secret put RATE_LIMIT_SALT
+npx wrangler secret put RATE_LIMIT_SALT --config wrangler.local.toml
 ```
 
 自用静态模式还需设置节点 JSON：
 
 ```bash
-npx wrangler secret put STATIC_NODES
+npx wrangler secret put STATIC_NODES --config wrangler.local.toml
 ```
 
 动态模式改为设置 `NODE_CORE_SECRET`，其值必须和 Provider 的 `INTERNAL_SECRET` 相同：
 
 ```bash
-npx wrangler secret put NODE_CORE_SECRET
+npx wrangler secret put NODE_CORE_SECRET --config wrangler.local.toml
 ```
 
 所有 Secret 都使用独立随机值或私有配置，不要提交到 Git。同时配置 `NODE_CORE` 和
@@ -222,7 +226,7 @@ git push origin v1.0.0
 ## 6. 部署和检查
 
 ```bash
-npx wrangler deploy
+npm run deploy
 
 curl -i https://sq.yolo2.cc/health
 bash <(curl -fsSL https://sq.yolo2.cc/run) --version
@@ -240,10 +244,14 @@ x-node-service: configured
 
 ## 自动部署
 
-GitHub Actions 需要：
+GitHub Actions 需要以下 Secrets：
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
+
+还需在 **Settings → Secrets and variables → Actions → Variables** 设置
+`SQ_D1_DATABASE_ID`，填写自己的 D1 数据库 ID。工作流从公开模板生成临时部署配置，
+数据库 ID 不提交到 Git；缺少或无效时会在部署前退出。D1 ID 是资源标识，不是访问密钥。
 
 API Token 需要 Workers Scripts、D1、R2 和对应域名权限。Worker Secret 由 Wrangler 单独
 维护，后续 Actions 部署不会覆盖。
