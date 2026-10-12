@@ -24,10 +24,10 @@ func TestAvailabilitySupportsDaytimeAndCrossMidnightWindows(t *testing.T) {
 	}
 }
 
-func TestConservativeNodeDefaults(t *testing.T) {
+func TestNewNodeDefaults(t *testing.T) {
 	config := defaultConfig()
-	if config.MaxMbps != 100 || config.MaxConcurrency != 1 || config.ReserveConcurrency != 0 ||
-		config.DailyPublicBytes != 10_000_000_000 || config.AccessMode != "public" ||
+	if config.MaxMbps != 200 || config.MaxConcurrency != 5 || config.ReserveConcurrency != 0 ||
+		config.DailyPublicBytes != 10_000_000_000 || config.DailyTotalBytes != 100_000_000_000 || config.AccessMode != "public" ||
 		config.UpdateMode != "automatic" || config.UpdateChannel != "stable" {
 		t.Fatalf("unexpected defaults: %+v", config)
 	}

@@ -1,277 +1,88 @@
 # SpeedQuality
 
-SpeedQuality 是面向 Linux 服务器的分省单线程测速工具。它可以按省份和运营商测试
-`100/200/400 Mbps` 档位，直接在终端显示彩色结果，并生成可分享的网页报告；也可以把经过
-服务器身份和检测时间校验的 NodeQuality 报告追加为联合报告。
+在VPS上查看指定省份电信、联通、移动的单线程速度，生成可分享的测速报告。支持Linux amd64、arm64。
 
-> 当前为公网 Alpha。一键命令已可使用；兼容节点受第三方服务的可用性、鉴权和限流
-> 影响，结果页和社区节点功能仍在持续验收。
+[使用指南](docs/usage.md) · [节点地图](https://sq.yolo2.cc/nodes) · [自建节点](docs/sq-node.md) · [问题反馈](https://github.com/rtw1248/speedquality/issues)
 
-已有服务器的运营者可使用 [VPS 部署方案](deploy/vps/README.md)：通过 Docker 运行 API、报告与私有 Core，
-用 SQLite、Redis 和本地快照承接存储，Cloudflare 负责 DNS/HTTPS/CDN。原有 Worker 部署方式仍可使用。
+> 目前处于公开测试阶段，实际可测地区取决于节点状态。
 
-## 快速运行
+## 快速开始
 
-Linux `amd64` 和 `arm64`：
-
-通过 SSH 登录 VPS，在终端执行下面的命令。浏览器直接打开 [/run](https://sq.yolo2.cc/run)
-会显示使用指南和复制按钮；测速完成后生成的报告链接可以直接用浏览器查看。
+通过SSH登录VPS，在Bash或Zsh终端执行：
 
 ```bash
-# bash / zsh
 bash <(curl -fsSL https://sq.yolo2.cc/run)
 ```
 
-```bash
-# fish
-curl -fsSL https://sq.yolo2.cc/run | env TERM=xterm bash
-```
+默认按SSH来源选择省份，使用200Mbps档位，测试可用的IPv4和IPv6。识别失败时用`-p`指定省份，或加`-i`打开菜单。
 
-也可以直接从 GitHub 获取脚本，适合在帖子中使用 GitHub 链接：
+浏览器打开[使用页面](https://sq.yolo2.cc/run)可查看指南并复制命令；[fish用法](docs/usage.md#快速运行)见详细说明。
+
+<details>
+<summary>也可以使用GitHub入口</summary>
 
 ```bash
 bash <(curl -fsSL https://github.com/rtw1248/speedquality/raw/refs/heads/main/run.sh)
 ```
 
-两种入口的参数相同，均连接 SpeedQuality 平台获取测速节点、下载测速程序并生成报告。
-GitHub 入口也支持在命令末尾添加 `-p hb`、`-s 100`、`-v4` 等参数。
+两种入口参数相同，均通过SpeedQuality平台获取节点、下载测速程序和生成报告。
 
-不传参数时，脚本会按当前 SSH 连接来源 IP 所在省份直接测速。检测到其他 SQ 任务或预计流量达到确认门槛时，会额外提示。
-自动识别成功时只在测速摘要中显示省份；需要提示 SSH 来源时，IPv4 使用 `119.98.*.*` 这样的
-脱敏格式，IPv6 隐藏完整地址，方便直接复制终端结果。
-测速档位默认是 `200 Mbps`；IPv4 和 IPv6 默认都检测，服务器只支持其中一种时只测可用的协议。
-需要更换地区、档位或关联报告时，分别使用 `-p`、`-s` 和 `--nq`。
-希望通过菜单选择时，显式添加 `-i`（`--interactive`）；该模式需要可输入的终端。
+</details>
 
-如果未指定 `-p` 且无法识别来源省份，脚本会直接退出并给出可复制的命令：先用 `-l`
-（`--list-provinces`）查看地区代码，再用 `-p hb` 等参数重新运行。
-也可以添加 `-i` 进入手动选择。
+## 主要特点
 
-测速过程和结果会直接显示在终端，完成后再返回分享链接：
+- **按省份测速：**支持中文名称、省份代码和北上广快捷写法`bsg`，一次最多5个省份。
+- **单线程、可控流量：**100、200、400Mbps三个限速档位，默认200Mbps。
+- **节点可对比：**报告显示实际节点的城市、编号和来源，方便比较不同时段。
+- **IPv4和IPv6：**自动测试可用协议，也可单独选择。
+- **方便分享：**终端彩色结果、手机网页报告，支持复制文本、NodeSeek和Markdown格式。
+- **关联NodeQuality：**校验后保留NQ原有分页，追加“速度质量”页，用一个链接分享两份结果。
 
-```text
-报告链接：https://sq.yolo2.cc/r/<REPORT_ID>
-```
-
-将报告链接粘贴到 Telegram 等支持链接预览的平台，可显示测速摘要图片：省份、档位、
-延迟及上传下载结果。图片不包含服务器或 SSH 来源 IP；多省报告注明图片展示的省份，
-点击链接查看完整结果。预览是否出现、旧链接何时刷新，还取决于平台缓存及聊天的预览设置。
-
-报告页支持手机查看：SQ 按省份和 IPv4/IPv6 显示紧凑表格，上传、下载列的单位为 Mbps；
-联合报告的 NQ 原文保留排版，较宽的内容可左右滑动。页面上下均可复制文本、NodeSeek 格式
-和通用 Markdown，导出内容与电脑端一致。
-
-测速时，进度条下方每 8 秒轮换一条使用提示，随机起始，相邻两次不重复。`--nq` 关联提示
-优先级最高，其次是省份选择，穿插介绍报告复制、档位和测速结果含义；完成后自动清除，
-提示不写入测速结果或分享报告。NodeQuality 关联提示仅在部署方开放该功能时显示。
-轮播提示也会说明：不传 `-p` 时，自动测 SSH 来源 IP 所在省份。
-切换 IPv4、IPv6 或省份时继续之前的提示及其剩余展示时间；提示状态随本次临时目录清理。
-
-表格中的 `-` 表示本次没有可用节点，或节点繁忙而跳过；`失败` 表示该方向未取得有效速率，另一方向
-已测出的数值仍会保留。每个运营商保持一行；繁忙跳过时，网页会补充简短说明。
-延迟和上传、下载分别着色；某个方向失败不会改变其他有效数值的颜色。
-
-官方动态调度按单个节点分配名额，测速完成立即释放，不提前占用备用节点。繁忙项目暂缓，
-先测试其他可用项目，最后进入短队列；所有省份及 IPv4/IPv6 **共用最多 30 秒的累计等待预算**，
-不会每换一个地区重新计时。等待时原地显示当前项目和累计秒数，超时保留已取得的结果。
-这个上限针对等候名额，实际传输、首次节点发现和连接准备另计；同一来源 IP 同时只允许
-一个动态节点任务。静态自建模式仍由节点自身限制容量，具体见[容量说明](docs/capacity.md)。
-
-开始前会分别检查所选 IP 类型到 SpeedQuality 入口的 HTTPS 连通性，短暂失败会重试一次。
-持续失败时显示 DNS、连接超时或 HTTPS 等具体原因；这不代表服务器没有相应 IP 地址。
-
-普通测速不会安装系统软件、修改 Python 或创建后台服务。每条 bash 命令只下载并校验一次
-`sqprobe`，本次选择的全部省份、运营商和 IPv4/IPv6 测试共用这份临时程序。完成测速、NQ
-关联和报告上传后清理；报错或收到可处理的退出信号也会清理。下次执行重新下载，不再创建
-`~/.cache/speedquality/`。断电或 `kill -9` 可能留下临时文件；用户指定的程序、诊断日志和
-自行保存的报告不会自动删除。
-
-同一 Linux 用户通过多个 SSH 窗口运行时，各任务使用独立临时目录。发现其他新版 SQ 任务，
-交互终端会询问是否继续并行（默认取消本次任务）；非交互运行会停止。明确需要并行时添加
-`--allow-parallel`，提醒后直接继续。此选项不绕过平台限制：动态调度仍限制同一来源 IP
-同时一个任务。并行测试会共享本机带宽，可能影响结果。需要 Linux `/proc` 和 util-linux
-提供的 `flock`；不同用户、容器及旧版脚本的任务检测不保证完整。
-
-新程序退出时会尝试迁移当前缓存路径下的历史缓存（包括 XDG 或显式配置的路径）。只删除
-目录结构、所有权及 SHA-256 与已发布版本一致的旧测速程序，并仅移除空目录；不会跟随
-软链接，也会保留未知文件、硬链接、修改过的程序及权限异常的目录。检测到其他非交互 Bash
-脚本或测速进程可能依赖旧缓存时，保守延后清理，后续空闲运行再尝试。旧版脚本不参与新版
-登记锁，因此应避免在迁移期间启动旧脚本。每次清理仅检查指定目录，不扫描其他缓存位置。
-
-脚本自动获取 HTTPS 平台时间，并用运行计时持续推进，供租约校验和报告时间使用；本机时钟
-偏快或偏慢时也能测速，不修改系统时间。平台时间无法获取时会提示并回退到本机时间。
-
-## 常用示例
+## 常用命令
 
 ```bash
-# 湖北，200 Mbps，自动测试可用的 IPv4/IPv6
-bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb
+# 湖北，100Mbps，仅IPv4
+bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb -s 100 -v4
 
-# 湖北和北京，100 Mbps；支持中文名称及中英文逗号
-bash <(curl -fsSL https://sq.yolo2.cc/run) -p '湖北，北京' -s 100
-
-# 只测 IPv4 或只测 IPv6
-bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb -v4
-bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb -v6
-
-# 只测北京、上海、广东
-bash <(curl -fsSL https://sq.yolo2.cc/run) -p bsg -s 100
-
-# 湖北加北上广，展开后去重
+# 湖北加北上广，默认200Mbps
 bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb,bsg
 
-# 手动选择地区、档位和报告关联
-bash <(curl -fsSL https://sq.yolo2.cc/run) -i
-
-# 绑定已有 NodeQuality 报告
-bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb \
-  --nq https://nodequality.com/r/REPORT_TOKEN
-
-# 精确使用自己注册的社区节点
-bash <(curl -fsSL https://sq.yolo2.cc/run) \
-  --node sqn_YOUR_ROUTE_KEY -s 200
+# 关联已有NodeQuality报告，将链接替换为你的报告地址
+bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb --nq https://nodequality.com/r/REPORT_TOKEN
 ```
 
-## 支持参数
+`-v6`仅测IPv6，`-i`打开菜单，`-l`列出省份，`--help`查看帮助。更多用法见[完整参数](docs/usage.md#支持参数)和[省份代码](docs/usage.md#省份选择)。
 
-| 参数 | 说明 |
-| --- | --- |
-| `-p, --province VALUE` | `auto`、`bsg`、省份代码、中文省级名称或多个省份，最多 5 个 |
-| `-s, --speed VALUE` | 测速档位和最高速率：`100/200/400` Mbps，默认 `200` |
-| `-v4, --ipv4` | 只测 IPv4 |
-| `-v6, --ipv6` | 只测 IPv6；不能与 `-v4` 同时使用 |
-| `-i, --interactive` | 显式进入手动选择菜单；已传入的参数作为菜单默认值 |
-| `--nq URL` | 绑定已有 NodeQuality 报告 URL 或报告 token |
-| `--node ROUTE_KEY` | 精确使用自己的 SQ 节点；不传 `-p` 时采用节点登记省份 |
-| `-l, --list-provinces` | 显示支持的省份代码并退出 |
-| `-h, --help` | 显示帮助并退出 |
-| `--version` | 显示脚本和探针版本并退出 |
+## 结果与流量
 
-当前公开测速只提供单线程模式，不提供 `--mode`、多线程或自定义测试时长参数。
+- **上传：**VPS→测速节点；**下载：**测速节点→VPS。
+- `200Mbps ✓`表示达到本次档位的判定标准，不代表线路的未限速峰值。
+- 默认200Mbps，单省三网、IPv4＋IPv6全测的最高参考流量约2.10GB；开始前会给出估算。
+- 普通测速使用一次性临时程序，完成后清理；同一条命令里的所有测试共用一次下载。
 
-## 省份选择
-
-| 代码 | 地区 | 代码 | 地区 | 代码 | 地区 | 代码 | 地区 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `bj` | 北京 | `tj` | 天津 | `he` | 河北 | `sx` | 山西 |
-| `nm` | 内蒙古 | `ln` | 辽宁 | `jl` | 吉林 | `hl` | 黑龙江 |
-| `sh` | 上海 | `js` | 江苏 | `zj` | 浙江 | `ah` | 安徽 |
-| `fj` | 福建 | `jx` | 江西 | `sd` | 山东 | `ha` | 河南 |
-| `hb` | 湖北 | `hn` | 湖南 | `gd` | 广东 | `gx` | 广西 |
-| `hi` | 海南 | `cq` | 重庆 | `sc` | 四川 | `gz` | 贵州 |
-| `yn` | 云南 | `xz` | 西藏 | `sn` | 陕西 | `gs` | 甘肃 |
-| `qh` | 青海 | `nx` | 宁夏 | `xj` | 新疆 |  |  |
-
-以上是当前公共测速接受的地区代码，节点可用性会变化，不保证每个地区的三网及 IPv4/IPv6
-始终有节点。香港、澳门、台湾的公共覆盖尚未确认，暂不列入公共测速范围；已注册的自有节点
-仍可通过 `--node ROUTE_KEY` 精确使用。
-
-- 多个省份可以用英文逗号、中文逗号或顿号分隔，单次最多选择 5 个；`all` 已关闭。
-- `bsg` 固定表示北京、上海、广东，不依赖 SSH 来源。可与其他省份混写：`hb,bsg` 表示湖北
-  加北上广，`bsg,bj,sh` 去重后仍只测北上广。展开并去重后最多 5 个省份，超出时直接提示错误。
-- 城市名不会静默转换。输入“武汉”会提示改用 `hb` 或“湖北”，避免混淆节点位置。
-- 不传 `-p` 时读取 `SSH_CONNECTION`、`SSH_CLIENT` 或登录会话来源。使用跳板机时通常只能
-  识别跳板机地址，应手动指定省份；海外、内网或无法定位的来源会直接退出，提示先用 `-l`
-  查看代码，再用 `-p` 指定。
-
-完整列表也可以直接查看：
-
-```bash
-bash <(curl -fsSL https://sq.yolo2.cc/run) --list-provinces
-```
-
-## 流量消耗
-
-每个省份默认分别测试电信、联通和移动。下表是线路达到所选速率上限时的最大参考值，包含约
-2 秒预热和每方向 5 秒正式测试；实际速率较低或部分节点不可用时，消耗会更少。
-
-| 档位 | 单省单种 IP | 单省 IPv4 + IPv6 | 5 省 IPv4 + IPv6 |
-| ---: | ---: | ---: | ---: |
-| 100 Mbps | 约 525 MB | 约 1.05 GB | 约 5.25 GB |
-| 200 Mbps | 约 1.05 GB | 约 2.10 GB | 约 10.50 GB |
-| 400 Mbps | 约 2.10 GB | 约 4.20 GB | 约 21.00 GB |
-
-预计消耗达到 10 GB 时，交互运行必须再次确认；非交互任务会直接停止。测速结束后还会显示
-出口网卡在测试期间的接收、发送和合计增量，其中可能包含同期其它进程的流量。完整计算见
-[`docs/capacity.md`](docs/capacity.md)。
-
-## 如何看结果
-
-- `200Mbps ✓` 表示 5 秒平均速率达到 200 Mbps 档位的 98%，不表示线路峰值只有 200 Mbps。
-- 速度达到档位的 80% 显示绿色，30% 到 80% 显示橙色，低于 30% 显示红色。
-- 延迟四舍五入显示为整数毫秒；按原始测量值判色：不超过 100ms 为绿色，超过 100ms 且
-  不超过 200ms 为黄色（网页为橙色），超过 200ms 为红色。
-- 延迟是对同一测速节点连续建立 3 次 TCP 连接后成功样本的平均往返时间，不是 ICMP ping、
-  HTTP 响应时间或满载延迟。当前版本不输出抖动。
-
-## NodeQuality 联合报告
-
-传入 `--nq` 后，SpeedQuality 会先核对当前服务器与 NodeQuality 报告的身份：完整 IP 可见时
-匹配完整 IP，IPv4 被隐藏时至少匹配前两段和 ASN。身份不一致或无法确认时拒绝绑定，只生成
-独立 SQ 报告。
-
-脚本会取 NodeQuality 报告中最晚的有效检测时间。与本次测速相差不超过 60 分钟时正常显示；
-超过 60 分钟或无法取得时间时仍可绑定，但会用橙色提示时间风险。联合报告保留 NodeQuality
-原有分页和内容，只在最后增加“速度质量”页，并保留 NodeQuality 原始报告链接。该功能不代表
-SpeedQuality 与 NodeQuality 存在官方合作关系。
-
-复制文本、NodeSeek 格式和通用 Markdown 均保留“速度质量”部分的关联校验结果，包括身份
-匹配依据、时间差提醒或关联失败原因。导出顺序与网页一致，NodeQuality 原有分页内容不变。
-
-身份、时间和快照解析都由 `sqprobe` 完成，测速服务器不需要 Python、pip 或虚拟环境。
+详细说明：[结果含义](docs/usage.md#如何看结果) · [流量估算](docs/usage.md#流量消耗) · [运行与清理](docs/usage.md#运行环境与清理) · [NQ关联规则](docs/usage.md#nodequality-联合报告)
 
 ## 提供测速节点
 
-愿意共享带宽的用户可以安装 `sq-node`：
+愿意提供节点的用户可以安装`sq-node`，它会创建后台服务。教育网也可自建并通过Route Key使用，公共教育网测速暂未开放：
 
 ```bash
 bash <(curl -fsSL https://sq.yolo2.cc/install-node)
 ```
 
-安装器会检测 Linux 架构、公网 IPv4/IPv6、地区和运营商，生成默认额度，并配置 systemd
-后台服务。节点可以设为公开调度、只允许 Route Key 精确使用，或暂停服务。日常管理直接运行：
+节点支持公开共享、仅持有Route Key的用户使用，以及暂停服务。安装、额度、管理和卸载见[自建节点指南](docs/sq-node.md)。
 
-```bash
-sudo sq-node
-```
+## 更多文档
 
-节点安装、云安全组、额度、注销、更新和 Route Key 的完整说明见
-[`docs/sq-node.md`](docs/sq-node.md)。自行实现兼容节点可阅读
-[`docs/node-protocol.md`](docs/node-protocol.md)。
+| 内容 | 入口 |
+| --- | --- |
+| 平台部署 | [VPS / Docker](deploy/vps/README.md) · [Cloudflare Worker](deploy/cloudflare-worker/README.md) |
+| 开发与接口 | [参与开发](CONTRIBUTING.md) · [API](docs/api.md) · [节点协议](docs/node-protocol.md) |
+| 运行与排查 | [容量说明](docs/capacity.md) · [故障排查](docs/observability.md) · [节点安全](docs/community-node-security.md) |
+| 后续计划 | [功能状态与路线](docs/roadmap.md) |
 
-## 文档与开发
+## 参考与许可证
 
-- [公开 Worker 部署](deploy/cloudflare-worker/README.md)
-- [客户端与服务端 API](docs/api.md)
-- [节点协议](docs/node-protocol.md)
-- [社区节点安全边界](docs/community-node-security.md)
-- [容量与流量估算](docs/capacity.md)
-- [日志与故障排查](docs/observability.md)
-- [功能状态与发布路线](docs/roadmap.md)
-- [参与开发](CONTRIBUTING.md)
+相关通信流程与测速方式的调研参考了[MiaM1ku/taierspeedtest](https://github.com/MiaM1ku/taierspeedtest)，感谢原作者的公开研究。
 
-本地运行报告页面预览：
-
-```bash
-cd deploy/cloudflare-worker
-npm run preview:venv
-```
-
-随后打开 `http://127.0.0.1:4173/report-standalone.html` 查看独立 SQ 报告，或打开
-`http://127.0.0.1:4173/report.html` 查看 NodeQuality 联合报告。预览脚本使用项目目录中的
-Python 虚拟环境，不修改系统 Python。
-
-## 参考与致谢
-
-SpeedQuality 的全球网测兼容层在调研过程中参考了
-[MiaM1ku/taierspeedtest](https://github.com/MiaM1ku/taierspeedtest) 对相关客户端通信流程和
-测速方式的公开研究，感谢项目作者的工作。SpeedQuality 的公开探针、流量控制、节点验证、
-调度接口、报告系统和自建节点协议由本项目维护；第三方测速服务仍受其自身鉴权、限流和
-使用规则约束。
-
-第三方来源、许可证和使用边界见 [`THIRD_PARTY.md`](THIRD_PARTY.md)。
-
-## 许可证
-
-SpeedQuality 的原创代码采用 [MIT License](LICENSE)。仓库包含或调用的第三方组件及服务
-继续遵循各自的许可证和使用规则。
+原创代码采用[MIT License](LICENSE)；第三方来源、许可证和使用边界见[第三方说明](THIRD_PARTY.md)。NQ报告关联由SQ提供，不代表与NodeQuality存在官方合作关系。

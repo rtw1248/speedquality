@@ -1,6 +1,9 @@
+import { normalizeNodeInfo, prepareNodeInfo, verifyReportNodeInfo, nodeDescription } from "./node-info.js";
 import { logEvent, requestID, routeLabel } from "./observability.js";
 import { reportImageResponse } from "./report-image-cache.js";
 import { prefersRunPage, renderRunPage } from "./run-page.js";
+import { renderNodeMap } from "./node-map.js";
+import { serveCoverage } from "./node-coverage.js";
 
 const SCRIPT_MARKER = "__SPEEDQUALITY_REPORT_BASE__";
 const PROBE_VERSION_MARKER = "__SPEEDQUALITY_PROBE_VERSION__";
@@ -45,7 +48,7 @@ const REGION_NAMES = Object.freeze({
   yn: "云南", xz: "西藏", sn: "陕西", gs: "甘肃", qh: "青海", nx: "宁夏",
   xj: "新疆", tw: "台湾", hk: "香港", mo: "澳门",
 });
-const CARRIER_NAMES = Object.freeze({ ct: "电信", cu: "联通", cm: "移动" });
+const CARRIER_NAMES = Object.freeze({ ct: "电信", cu: "联通", cm: "移动", edu: "教育网" });
 const CARRIER_CODES = new Set(Object.keys(CARRIER_NAMES));
 const REGION_ALIASES = Object.freeze({
   beijing: "bj", tianjin: "tj", hebei: "he", shanxi: "sx", "inner mongolia": "nm",
@@ -57,6 +60,7 @@ const REGION_ALIASES = Object.freeze({
   xinjiang: "xj", taiwan: "tw", "hong kong": "hk", macao: "mo", macau: "mo",
 });
 const CARRIER_ASNS = Object.freeze({
+  edu: new Set([4538, 23910]),
   ct: new Set([4134, 4809]),
   cu: new Set([4837, 9929, 10099]),
   cm: new Set([9808, 58453]),
@@ -585,6 +589,8 @@ export function validateSpeedData(value) {
         carrier,
         label,
         node_id: nodeID,
+        node_used: item.node_used === true || (item.node_used == null && single != null),
+        ...(normalizeNodeInfo(item.node_info, true) ? { node_info: normalizeNodeInfo(item.node_info, true) } : {}),
         latency_ms: latency,
         status,
         error: status === "failed" ? boundedText(item.error, 200) || "测速失败" : "",
@@ -795,6 +801,9 @@ export function maskedReportAddress(value) {
 }
 
 function detectedRegion(cf) {
+  const country = String(cf?.country || "").trim().toUpperCase();
+  // Province codes can overlap foreign subdivision codes (for example US-MO).
+  if (country && !["CN", "HK", "MO", "TW"].includes(country)) return "";
   const code = String(cf?.regionCode || "").trim().toLowerCase().replace(/^cn-/, "");
   if (REGION_CODES.has(code)) return code;
   const rawName = String(cf?.region || "").trim();
@@ -813,6 +822,7 @@ function detectedCarrier(cf) {
     if (values.has(asn)) return carrier;
   }
   const organization = String(cf?.asOrganization || "").toLowerCase();
+  if (/\bcernet\b|china education and research network/.test(organization)) return "edu";
   if (/chinanet|china telecom|ctgnet/.test(organization)) return "ct";
   if (/china unicom|cncgroup|china169|\bunicom\b/.test(organization)) return "cu";
   if (/china mobile|\bcmnet\b|cmi limited/.test(organization)) return "cm";
@@ -920,6 +930,7 @@ async function callCommunityCore(env, pathname, input, options = {}) {
     "content-type": "application/json",
     "x-node-core-secret": String(env.NODE_CORE_SECRET || ""),
   };
+  if (pathname === "/task") headers["x-sq-node-info"] = "1";
   if (options.clientIP) headers["x-community-client-ip"] = options.clientIP;
   if (options.region) headers["x-community-region"] = options.region;
   if (options.carrier) headers["x-community-carrier"] = options.carrier;
@@ -1171,7 +1182,7 @@ function normalizeStaticNode(node, input) {
   const maxMbps = Number(node.max_mbps);
   const readyDelay = Number(node.ready_delay_ms ?? 0);
   const configuredLabel = boundedText(node.label, 32);
-  if (!CARRIER_CODES.has(carrier) || staticAddressFamily(address) !== input.family ||
+  if (carrier === "edu" || !CARRIER_CODES.has(carrier) || staticAddressFamily(address) !== input.family ||
       !Number.isInteger(port) || port < 1 || port > 65535 ||
       !["http", "https"].includes(scheme) || !TARGET_SPEEDS.has(maxMbps) ||
       maxMbps < input.target_mbps || !Number.isInteger(readyDelay) ||
@@ -1213,6 +1224,7 @@ async function createStaticNodeLease(input, configuration, now) {
     const endpoint = staticNodeEndpoint(node, input.family);
     group.candidates.push({
       id: await hashText(`static|${input.region}|${nodeKey}`, 32),
+      node_info: { city: "", city_status: "unknown", source: "static" },
       address: node.address,
       port: node.port,
       activate: {
@@ -1282,6 +1294,7 @@ function validCoreLease(lease, expected, now) {
   for (const target of lease.targets) {
     if (typeof target?.carrier !== "string" ||
         !CARRIER_CODES.has(target.carrier) ||
+        (target.carrier === "edu" && !expected.communityNodeID) ||
         carriers.has(target.carrier) || typeof target?.label !== "string" ||
         !target.label.trim() || target.label.length > 32 ||
         !Array.isArray(target.candidates) || target.candidates.length < 1 || target.candidates.length > 4) return false;
@@ -1295,6 +1308,7 @@ function validCoreLease(lease, expected, now) {
           /^\d{1,3}$/.test(part) && Number(part) <= 255)
         : address.includes(":") && /^[0-9a-f:.]+$/i.test(address);
       if (!/^[a-f0-9]{32}$/.test(String(candidate?.id || "")) ||
+          (expected.communityNodeID && candidate.id !== expected.communityNodeID) ||
           candidateIDs.has(candidate.id) ||
           typeof candidate.address !== "string" || candidate.address.length > 64 ||
           !addressMatchesFamily ||
@@ -1379,6 +1393,7 @@ async function requestNodeLease(request, env) {
         headers: {
           "content-type": "application/json",
           "x-node-core-secret": String(env.NODE_CORE_SECRET || ""),
+          "x-sq-node-info": "1",
           "x-request-id": currentRequestID,
         },
         body: JSON.stringify(input),
@@ -1432,9 +1447,11 @@ async function requestNodeLease(request, env) {
     duration: input.duration_seconds,
     targetMbps: input.target_mbps,
     modes: input.modes,
+    communityNodeID,
   }, now)) {
     return textResponse("Node service returned invalid data\n", 502, { "cache-control": "no-store" });
   }
+  await prepareNodeInfo(lease, request, env, authorized.tokenHash);
   logEvent(env, "info", "lease.delivered", {
     request_id: currentRequestID,
     session_id: authorized.tokenHash.slice(0, 12),
@@ -1469,6 +1486,7 @@ async function requestNodeTask(request, env) {
   const session = authorized.session;
   if (!params || !["acquire", "finish", "cancel"].includes(action) ||
       !String(session.regions).split(",").includes(region) || !CARRIER_CODES.has(carrier) ||
+      (carrier === "edu" && !session.community_node_id) ||
       !["v4", "v6"].includes(family) || (session.ip_mode === "v4" && family !== "v4") ||
       (action === "acquire" && session.completed_at)) {
     return jsonResponse({ error: "invalid_task_request" }, 400);
@@ -1506,11 +1524,13 @@ async function requestNodeTask(request, env) {
   if (action === "acquire" && result.status === 200) {
     if (!validCoreLease(result.value, {
       region, family, duration: input.duration_seconds, targetMbps: input.target_mbps, modes: input.modes,
+      communityNodeID: session.community_node_id,
     }, now) || result.value.targets.length !== 1 || result.value.targets[0].carrier !== carrier ||
         result.value.targets[0].candidates.length !== 1) {
       await callCommunityCore(env, "/task", { ...input, action: "cancel" });
       return jsonResponse({ error: "node_service_invalid_response" }, 502);
     }
+    await prepareNodeInfo(result.value, request, env, authorized.tokenHash);
     return jsonResponse(result.value);
   }
   if (result.status === 202 && result.value.status === "waiting") {
@@ -1668,6 +1688,8 @@ function sessionMatchesReport(session, report) {
   const expectedModes = requestedModes(session.mode).join(",");
   for (const speedReport of report.speedReports) {
     if (!allowedRegions.has(speedReport.region.code)) return false;
+    if (speedReport.results.some((result) => result.carrier === "edu" &&
+        (!session.community_node_id || (result.node_id && result.node_id !== session.community_node_id)))) return false;
     if (session.ip_mode === "v4" && speedReport.family !== "v4") return false;
     if (speedReport.modes.join(",") !== expectedModes ||
         Number(speedReport.duration_seconds) !== Number(session.duration_seconds) ||
@@ -1686,6 +1708,7 @@ function healthMeasurements(speedReports) {
       const modes = [result.single, result.multi].filter(Boolean);
       measurements.push({
         lease_id: report.lease_id,
+        family: report.family,
         node_id: result.node_id,
         status: result.status,
         latency_ms: result.latency_ms,
@@ -1721,6 +1744,7 @@ async function forwardHealthFeedback(env, speedReports, currentRequestID = "") {
 
 async function createReport(request, env) {
   const started = Date.now();
+  const now = Math.floor(started / 1000);
   const currentRequestID = requestID(request);
   if (!env.DB) {
     return textResponse("Report storage is not configured\n", 503, {
@@ -1759,6 +1783,19 @@ async function createReport(request, env) {
       "cache-control": "no-store",
     });
   }
+  const nodeInfoSessions = [sessionAuthorization.tokenHash];
+  // Dual-stack runs use one source-bound session per address family. Possession
+  // of the second bearer token binds its metadata without storing another IP.
+  const peerToken = request.headers.get("x-sq-peer-session") || "";
+  if (peerToken && SESSION_TOKEN_PATTERN.test(peerToken)) {
+    const peerHash = await hashText(peerToken);
+    const peer = await env.DB.prepare("SELECT * FROM sessions WHERE token_hash = ? AND expires_at > ?")
+      .bind(peerHash, now).first();
+    if (peer && !peer.completed_at && sessionMatchesReport(peer, parsed.value) &&
+        (peer.community_node_id || "") === (sessionAuthorization.session.community_node_id || "")) nodeInfoSessions.push(peerHash);
+  }
+  await verifyReportNodeInfo(parsed.value.speedReports, env, nodeInfoSessions);
+  parsed.value.speedData = JSON.stringify(parsed.value.speedReports);
   parsed.value.sourceIPMasked = maskedReportAddress(clientAddress(request));
   const network = reportSourceNetwork(request.cf?.asn, request.cf?.asOrganization);
   parsed.value.sourceAsn = network.asn;
@@ -1773,7 +1810,6 @@ async function createReport(request, env) {
     }
   }
 
-  const now = Math.floor(Date.now() / 1000);
   try {
     if (!(await enforceDailyLimit(request, env, now))) {
       return textResponse("Daily report limit exceeded\n", 429, {
@@ -2088,6 +2124,11 @@ export function reportPreviewModel(report) {
       const metric = (text, code) => ({ text: text.replace("Mbps", ""), color: text === "-" ? "muted" : color(code) });
       return {
         label: `${CARRIER_NAMES[result.carrier]} · ${entry.family === "v4" ? "IPv4" : "IPv6"}`,
+        node: nodeDescription(result) ? {
+          id: result.node_id.slice(0, 12),
+          city: result.node_info?.city_status === "conflict" ? "城市待核实" : result.node_info?.city || "城市未知",
+          source: { third_party: "第三方", community: "自建", static: "静态" }[result.node_info?.source] || "未知",
+        } : null,
         latency: metric(values.latency, latencyAnsiCode(result.latency_ms)),
         upload: metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target)),
         download: metric(values.downloadValue, speedAnsiCode(values.downloadMbps, target)),
@@ -2155,6 +2196,8 @@ function renderStructuredSpeedText(value, options = {}) {
           ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps), colored),
         ];
         lines.push(columns.join("  "));
+        const node = nodeDescription(result);
+        if (node) lines.push(ansiText(`      节点：${node}`, "90", colored));
       }
       if (rows.some((result) => ["节点繁忙", "同一来源已有测速任务"].includes(result.error))) {
         lines.push(ansiText("  部分项目因节点繁忙或同一来源已有任务而跳过（-）。", "33", colored));
@@ -2180,7 +2223,8 @@ function renderMobileSpeedReport(report, options) {
         <thead><tr><th scope="col">${escapeHtml(family)}</th><th scope="col">延迟</th><th scope="col">上传 <small>Mbps</small></th><th scope="col">下载 <small>Mbps</small></th></tr></thead>
         <tbody>${rows.map((result) => {
           const values = speedRowValues(result, target);
-          return `<tr><th scope="row">${escapeHtml(values.carrier)}</th><td>${metric(values.latency, latencyAnsiCode(result.latency_ms))}</td><td>${metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target))}</td><td>${metric(values.downloadValue, speedAnsiCode(values.downloadMbps, target))}</td></tr>`;
+          const node = nodeDescription(result);
+          return `<tr><th scope="row">${escapeHtml(values.carrier)}</th><td>${metric(values.latency, latencyAnsiCode(result.latency_ms))}</td><td>${metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target))}</td><td>${metric(values.downloadValue, speedAnsiCode(values.downloadMbps, target))}</td></tr>${node ? `<tr class="mobile-node-info"><td colspan="4">节点：${escapeHtml(node)}</td></tr>` : ""}`;
         }).join("")}</tbody>
       </table>${busy ? '<p class="mobile-busy-note">部分项目因节点繁忙或同一来源已有任务而跳过（-）。</p>' : ""}`;
     }).join("")}
@@ -2625,7 +2669,7 @@ export function renderReport(report, options = {}) {
       <p class="report-links"><span>报告链接：<a href="${escapeHtml(canonicalReportUrl)}">${escapeHtml(canonicalReportUrl)}</a></span>${projectLink}</p>
     </section>` : "";
   const footerHtml = isSpeedPage
-    ? `<footer>报告将在 ${escapeHtml(formatTime(report.expires_at))} 后自动清理。</footer>`
+    ? `<footer><a href="/nodes">节点地图 · 查看覆盖与贡献节点</a><br>报告将在 ${escapeHtml(formatTime(report.expires_at))} 后自动清理。</footer>`
     : "";
   const scriptNonce = /^[A-Za-z0-9_-]{16,64}$/.test(String(options.scriptNonce || ""))
     ? String(options.scriptNonce)
@@ -2807,6 +2851,7 @@ export function renderReport(report, options = {}) {
       .mobile-speed-table thead th { border-bottom:1px solid var(--line); color:#95e6ff; font-weight:600; }
       .mobile-speed-table th:first-child { text-align:left; }
       .mobile-speed-table tbody th { color:#70a598; font-weight:400; }
+      .mobile-speed-table .mobile-node-info td { white-space:normal; overflow-wrap:anywhere; text-align:left; padding:0 0 8px; color:#99a9bd; font-size:11px; }
       .mobile-speed-table small { display:block; font-size:10px; font-weight:400; }
       .mobile-busy-note { color:var(--warn); font-size:12px; margin:8px 0; }
       .mobile-traffic { margin:16px 0 12px; padding:12px 0; border-block:1px solid var(--line); }
@@ -3027,6 +3072,14 @@ async function serveProbeAsset(request, env, version, asset) {
 
 async function routeRequest(request, env, context) {
   const url = new URL(request.url);
+  if (url.pathname === "/api/nodes/coverage") return serveCoverage(request, env, context);
+  if (url.pathname === "/nodes") {
+    if (!["GET", "HEAD"].includes(request.method)) return textResponse("Method Not Allowed\n", 405, { allow: "GET, HEAD" });
+    const nonce = `${randomId()}${randomId()}`;
+    return htmlResponse(request.method === "HEAD" ? null : renderNodeMap(nonce), 200, {
+      "content-security-policy": reportContentSecurityPolicy(nonce) + "; connect-src 'self'", "cache-control": "no-store",
+    });
+  }
   const maintenance = String(env.MAINTENANCE_MODE || "");
   if ((maintenance === "drain" && ["/api/session", "/api/nodes/register"].includes(url.pathname)) ||
       (maintenance === "readonly" && !["GET", "HEAD"].includes(request.method))) {

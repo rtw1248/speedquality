@@ -79,11 +79,11 @@ func defaultConfig() Config {
 	return Config{
 		Version:            configVersion,
 		ListenAddress:      "::",
-		MaxMbps:            100,
-		MaxConcurrency:     1,
+		MaxMbps:            200,
+		MaxConcurrency:     5,
 		ReserveConcurrency: 0,
 		DailyPublicBytes:   10_000_000_000,
-		DailyTotalBytes:    20_000_000_000,
+		DailyTotalBytes:    100_000_000_000,
 		AccessMode:         "public",
 		Availability:       "always",
 		Timezone:           "Local",
@@ -135,6 +135,8 @@ func loadConfig(path string) (Config, error) {
 
 func applyConfigDefaults(config *Config) {
 	if config.DailyTotalBytes == 0 {
+		// Preserve the historical fallback for older configuration files.
+		// New installations get 100 GB from defaultConfig instead.
 		config.DailyTotalBytes = 20_000_000_000
 		if config.DailyPublicBytes > config.DailyTotalBytes {
 			config.DailyTotalBytes = config.DailyPublicBytes
@@ -180,8 +182,8 @@ func (config Config) validate(requireRegistration bool) error {
 	if config.Version != configVersion {
 		return fmt.Errorf("不支持的配置版本: %d", config.Version)
 	}
-	if config.Port < 1 || config.Port > 65535 {
-		return errors.New("服务端口无效")
+	if config.Port < 50000 || config.Port > 59999 {
+		return errors.New("服务端口必须在 50000 到 59999 之间")
 	}
 	if config.ListenAddress == "" || strings.ContainsAny(config.ListenAddress, "\r\n") {
 		return errors.New("监听地址无效")
@@ -205,7 +207,7 @@ func (config Config) validate(requireRegistration bool) error {
 		return errors.New("省份代码无效")
 	}
 	if !validCarrier(config.Carrier) {
-		return errors.New("运营商只支持 ct、cu 或 cm")
+		return errors.New("运营商只支持电信（ct）、联通（cu）、移动（cm）或教育网（edu）")
 	}
 	if config.MaxMbps != 100 && config.MaxMbps != 200 && config.MaxMbps != 400 {
 		return errors.New("最高档位只支持 100、200 或 400 Mbps")
@@ -337,10 +339,43 @@ func randomURLToken(bytes int) (string, error) {
 }
 
 func validCarrier(value string) bool {
-	return value == "ct" || value == "cu" || value == "cm"
+	return value == "ct" || value == "cu" || value == "cm" || value == "edu"
 }
 
-var carrierNames = map[string]string{"ct": "电信", "cu": "联通", "cm": "移动"}
+var carrierNames = map[string]string{"ct": "电信", "cu": "联通", "cm": "移动", "edu": "教育网"}
+
+// normalizeCarrierCode accepts the short protocol code as well as the names
+// shown to a person during setup. The saved value is always the stable code.
+func normalizeCarrierCode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ct", "电信", "中国电信", "chinatelecom":
+		return "ct"
+	case "cu", "联通", "中国联通", "chinaunicom":
+		return "cu"
+	case "cm", "移动", "中国移动", "chinamobile":
+		return "cm"
+	case "edu", "教育网", "cernet", "中国教育和科研计算机网":
+		return "edu"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+// normalizeRegionCode keeps node setup consistent with the client, which also
+// accepts a province name. The platform still performs the authoritative IP
+// location check during registration.
+func normalizeRegionCode(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if validRegion(value) {
+		return value
+	}
+	for code, name := range regionNames {
+		if value == strings.ToLower(name) {
+			return code
+		}
+	}
+	return value
+}
 
 func validRegion(value string) bool {
 	_, exists := regionNames[value]

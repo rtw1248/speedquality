@@ -55,6 +55,7 @@ type detectionResponse struct {
 }
 
 type detectedEnvironment struct {
+	Families       []detectionResponse
 	IPv4           string
 	IPv6           string
 	CountryCode    string
@@ -141,12 +142,7 @@ func detectNodeEnvironment(platformURL string) (detectedEnvironment, error) {
 		} else {
 			detected.IPv6 = value.Address
 		}
-		if detected.Region != "" && value.Region != "" && value.Region != detected.Region {
-			if family.name == "v6" {
-				detected.IPv6 = ""
-			}
-			continue
-		}
+		detected.Families = append(detected.Families, value)
 		if detected.CountryCode == "" {
 			detected.CountryCode = value.CountryCode
 		}
@@ -438,7 +434,29 @@ func platformJSON(ctx context.Context, config Config, method, endpoint, token st
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
-	response, err := platformHTTPClient.Do(request)
+	client := *platformHTTPClient
+	// A single-family node must register from that family so the platform can
+	// verify that the request comes from one of its declared addresses.
+	if (config.PublicIPv4 == "") != (config.PublicIPv6 == "") {
+		base := client.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		if transport, ok := base.(*http.Transport); ok {
+			transport = transport.Clone()
+			defer transport.CloseIdleConnections()
+			network := "tcp4"
+			if config.PublicIPv4 == "" {
+				network = "tcp6"
+			}
+			dialer := &net.Dialer{Timeout: 8 * time.Second, KeepAlive: 15 * time.Second}
+			transport.DialContext = func(ctx context.Context, _, address string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, address)
+			}
+			client.Transport = transport
+		}
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("平台请求失败: %w", err)
 	}
@@ -460,6 +478,18 @@ func platformJSON(ctx context.Context, config Config, method, endpoint, token st
 		}
 		if message == "" {
 			message = response.Status
+		}
+		switch message {
+		case "node_location_mismatch":
+			message = "公网 IP 的国家或省份与申报值不一致，节点未注册（node_location_mismatch）"
+		case "node_location_unverified":
+			message = "平台无法确认公网 IP 的省份，节点未注册；请核实 IP 归属或稍后重试（node_location_unverified）"
+		case "node_carrier_mismatch":
+			message = "公网 IP 的运营商与申报值不一致，节点未注册（node_carrier_mismatch）"
+		case "node_carrier_unverified":
+			message = "平台无法从公网 IP 的 ASN/组织确认电信、联通、移动或教育网归属，节点未注册（node_carrier_unverified）"
+		case "node_identity_unavailable":
+			message = "节点地区和运营商校验服务暂不可用，节点未注册；请稍后重试（node_identity_unavailable）"
 		}
 		return fmt.Errorf("平台拒绝请求: %s", message)
 	}

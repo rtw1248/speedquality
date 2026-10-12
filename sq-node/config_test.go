@@ -80,6 +80,24 @@ func TestConfigValidationAndByteLimits(t *testing.T) {
 	}
 }
 
+func TestExistingConfigKeepsHistoricalQuotasOnUpgrade(t *testing.T) {
+	path, config, _ := testConfig(t)
+	config.MaxMbps, config.MaxConcurrency, config.ReserveConcurrency = 100, 1, 0
+	config.DailyPublicBytes, config.DailyTotalBytes = 10_000_000_000, 20_000_000_000
+	if err := saveConfig(path, config); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadConfig(path)
+	if err != nil || loaded != config {
+		t.Fatalf("upgrade changed existing configuration: %v %+v", err, loaded)
+	}
+	config.DailyTotalBytes = 0
+	applyConfigDefaults(&config)
+	if config.DailyTotalBytes != 20_000_000_000 {
+		t.Fatal("legacy missing total limit was increased to new installation default")
+	}
+}
+
 func TestRegisteredNodeIdentityCannotChangeLocally(t *testing.T) {
 	path, original, _ := testConfig(t)
 	var output bytes.Buffer

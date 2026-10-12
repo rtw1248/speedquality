@@ -118,8 +118,8 @@ GET /api/nodes/detect
 
 节点分别通过 IPv4 和 IPv6 请求该接口。响应包含平台实际看到的公网地址、地址族、国家、
 省份候选、ASN、网络组织和可可靠识别时的运营商。安装器只把它作为首次配置候选，注册时
-Core 仍会重新核对请求来源、地区和公网所有权。无法识别运营商时返回空字符串，由终端向导
-只询问这一项。
+Core 仍会重新核对请求来源、地区、运营商和公网所有权。无法识别运营商时返回空字符串，由终端向导
+只询问这一项；手填的 `ct/cu/cm/edu` 仍必须得到独立 ASN/组织证据支持。
 
 ### 注册
 
@@ -136,11 +136,11 @@ Content-Type: application/json
   "ipv4": "YOUR_PUBLIC_IPV4",
   "ipv6": "",
   "port": 51234,
-  "max_mbps": 100,
-  "max_concurrency": 1,
+  "max_mbps": 200,
+  "max_concurrency": 5,
   "reserve_concurrency": 0,
   "daily_public_bytes": 10000000000,
-  "daily_total_bytes": 20000000000,
+  "daily_total_bytes": 100000000000,
   "access_mode": "public",
   "availability": "always",
   "timezone": "Local",
@@ -154,8 +154,9 @@ Content-Type: application/json
 ```
 
 上面的地址仅表示字段格式，必须换成节点自己的真实公网地址。公开 Worker 把实际请求来源 IP
-传给私有 Core；来源必须与登记的 IPv4 或 IPv6 一致。Core 随后访问
-`/.well-known/speedquality/ownership` 核对一次性 challenge，并独立校验地区。
+传给私有 Core；来源必须与登记的 IPv4 或 IPv6 一致。Core 独立校验每个登记 IP 的国家、省份
+和运营商，再访问 `/.well-known/speedquality/ownership` 核对一次性 challenge。
+身份不一致或无法确认时注册失败，不会把申报值写入公共节点目录。
 
 成功响应只在本次注册返回 API Token：
 
@@ -295,8 +296,8 @@ region=hb&family=v4
 
 公开 Worker 会拒绝 Provider 返回的档位、时长、模式、地区或 IP 类型不一致的租约。探针
 在本地测量候选节点 TCP 连接时间并激活合适节点。不同运营商的候选节点可以并行准备，
-正式上传和下载按固定顺序执行，避免争抢用户服务器带宽。运营商代码只允许 `ct`（电信）、
-`cu`（联通）和 `cm`（移动），暂不接受教育网节点。
+正式上传和下载按固定顺序执行，避免争抢用户服务器带宽。公共调度只允许`ct`（电信）、
+`cu`（联通）和`cm`（移动）；通过Route Key绑定具体自建节点时另支持`edu`（教育网）。
 
 社区节点租约的 `/activate` 请求会携带私有 Core 签发的 ES256 JWT。JWT 绑定 Node ID、用户
 来源 IP、`100/200/400` 档位、单方向字节上限、5 秒时长、到期时间和一次性 `jti`。节点成功
@@ -398,3 +399,22 @@ Provider 应按物理节点而非逻辑标签控制并发，并根据 `target_mb
 报告保存后，公开 Worker 向 Provider 的 `/feedback` 发送每个已使用节点的
 `lease_id`、`node_id`、`target_mbps`、状态、延迟及上下行速率。Provider 可据此按档位更新
 健康数据并提前释放物理节点预留；没有成功提交报告的租约必须依靠自身过期时间释放。
+
+## 节点信息与覆盖（v1.3.0）
+
+`GET /nodes`提供公开节点地图；`GET /api/nodes/coverage`返回版本1的覆盖快照，支持HEAD，
+浏览器缓存60秒、边缘缓存300秒。不可用时返回503和`coverage_unavailable`，不返回伪造的空列表。
+该接口不执行测速、不查询用户来源、不返回节点地址或凭据。统计是近期观察到的公开端点，
+不是全国完整节点清单。教育网仅包含自建公开节点，`education_public_testing`始终为`false`。
+
+节点字段为`id, region, carrier, family, city, city_status, source, status, last_success_at,
+last_checked_at, public_testing`。`status`为`verified`或`pending`，近期成功窗口为7天；
+同一地址的目录别名和端口按IP协议去重。暂停、撤销和私有自建节点不展示，访问模式变更在最多5分钟缓存周期内生效。
+
+租约和任务接口支持`X-SQ-Node-Info: 1`能力头，细节见[节点协议](node-protocol.md#可选节点快照v130)。
+上报结果可包含`node_used`和带签名的`node_info`。平台校验后只保存快照，丢弃签名；无效快照被移除。
+双栈运行使用两份来源绑定会话时，结果请求可用`X-SQ-Peer-Session`提交另一份会话的Bearer Token，
+只用于校验同一配置、同一指定节点且仍有效的另一组快照，不在报告中保存该Token或新增完整用户IP。
+
+`edu`仅允许来自Route Key解析并绑定具体节点的会话。普通公共任务、静态节点和第三方教育网调度
+继续关闭，不能仅靠提交`carrier: edu`开启。

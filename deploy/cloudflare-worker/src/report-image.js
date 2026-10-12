@@ -50,6 +50,7 @@ for (const [size, colors] of Object.entries({
   32: ["green", "cyan"], 40: ["white"],
 })) {
   for (const character of Object.keys(SHARE_FONT[size])) {
+    if (Number(size) === 20 && !SHARE_FONT[24][character]) continue;
     const g = glyph(size, character);
     for (const color of colors) tintedPixels(g, color);
   }
@@ -99,17 +100,26 @@ export async function renderPreviewPNG(model) {
   text(model.configuration, 64, 177, 24, "muted");
   line(203);
   if (model.rows.length) {
-    text("运营商 / IP", 64, 244, 24, "cyan");
-    text("延迟", 560, 244, 24, "cyan", "right");
-    text("上传 Mbps", 846, 244, 24, "cyan", "right");
-    text("下载 Mbps", 1136, 244, 24, "cyan", "right");
-    const step = model.rows.length > 3 ? 41 : 65;
+    text("运营商 / IP", 64, 236, 24, "cyan");
+    text("延迟", 560, 236, 24, "cyan", "right");
+    text("上传 Mbps", 846, 236, 24, "cyan", "right");
+    text("下载 Mbps", 1136, 236, 24, "cyan", "right");
+    const compact = model.rows.length > 3;
+    const step = compact ? 46 : 65;
     model.rows.forEach((row, index) => {
-      const y = 297 + index * step;
-      text(row.label, 64, y, 24, "white");
-      text(row.latency.text, 560, y, 24, row.latency.color, "right");
-      text(row.upload.text, 846, y, 24, row.upload.color, "right");
-      text(row.download.text, 1136, y, 24, row.download.color, "right");
+      const y = (compact ? 273 : 297) + index * step;
+      text(row.label, 64, y, compact ? 20 : 24, "white");
+      if (row.node) {
+        let city = row.node.city;
+        if ([...city].some(ch => !SHARE_FONT[20][ch])) city = "城市详见报告";
+        if ([...city].length > 7) city = [...city].slice(0, 6).join("") + ".";
+        text(`${city} · ${row.node.id}`, 64, y + 23, 20, "muted");
+        text(row.node.source, 408, y + 23, 20, "muted", "right");
+      }
+      const metricY = y + (row.node ? 10 : 0);
+      text(row.latency.text, 560, metricY, 24, row.latency.color, "right");
+      text(row.upload.text, 846, metricY, 24, row.upload.color, "right");
+      text(row.download.text, 1136, metricY, 24, row.download.color, "right");
     });
   } else {
     text("打开报告查看完整结果", 64, 345, 32, "cyan");

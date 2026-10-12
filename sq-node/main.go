@@ -147,14 +147,15 @@ func printUsage(output io.Writer) {
   sq-node access private          仅允许 --node Route Key
   sq-node access paused           暂停所有新测速
   sq-node limit daily 20GB        设置每日公共流量
-  sq-node limit total 40GB        设置包含自用任务的每日总流量
+  sq-node limit total 100GB       设置包含自用任务的每日总流量
   sq-node limit speed 200         设置最高测速档位
-  sq-node limit concurrency 2     设置总并发
+  sq-node limit concurrency 5     设置总并发
   sq-node limit reserve 1         设置提供者保留并发
   sq-node schedule always         全天提供服务
-  sq-node schedule 08:00-23:00   设置每日可用时间
+  sq-node schedule 08:00-23:00     设置每日可用时间
   sq-node update --check          检查稳定通道更新
   sq-node update                  安装经过签名的更新
+  sq-node update --mode manual    改为手动检查和安装更新
   sq-node heartbeat               立即同步配置和状态
   sq-node telemetry               查看当前心跳会上报的平台字段
   sq-node route-key rotate        轮换 Route Key，旧 Key 立即失效
@@ -203,19 +204,19 @@ func initCommandModeNamed(
 	flags.SetOutput(output)
 	platform := flags.String("platform", config.PlatformURL, "平台 HTTPS 地址")
 	region := flags.String("region", config.Region, "省份代码")
-	carrier := flags.String("carrier", config.Carrier, "运营商 ct/cu/cm")
+	carrier := flags.String("carrier", config.Carrier, "运营商：ct=电信、cu=联通、cm=移动、edu=教育网")
 	ipv4 := flags.String("ipv4", config.PublicIPv4, "公网 IPv4")
 	ipv6 := flags.String("ipv6", config.PublicIPv6, "公网 IPv6")
 	port := flags.Int("port", config.Port, "监听端口，默认从 50000-59999 随机选择")
-	speed := flags.Int("speed", config.MaxMbps, "最高档位 100/200/400")
+	speed := flags.Int("speed", config.MaxMbps, "最高档位 100/200/400 Mbps")
 	concurrency := flags.Int("concurrency", config.MaxConcurrency, "最大并发")
 	reserve := flags.Int("reserve", config.ReserveConcurrency, "提供者保留并发")
 	daily := flags.String("daily", formatByteLimit(config.DailyPublicBytes), "每日公共流量，例如 20GB")
-	total := flags.String("total", formatByteLimit(config.DailyTotalBytes), "每日总流量，例如 40GB")
-	access := flags.String("access", config.AccessMode, "public/private/paused")
+	total := flags.String("total", formatByteLimit(config.DailyTotalBytes), "每日总流量，例如 100GB")
+	access := flags.String("access", config.AccessMode, "public=公开共享、private=仅 Route Key、paused=暂停")
 	availability := flags.String("availability", config.Availability, "always 或 HH:MM-HH:MM")
 	timezone := flags.String("timezone", config.Timezone, "Local、UTC 或 IANA 时区")
-	updateMode := flags.String("update-mode", config.UpdateMode, "automatic/manual")
+	updateMode := flags.String("update-mode", config.UpdateMode, "automatic=自动安装签名更新、manual=手动检查和安装")
 	label := flags.String("label", config.Label, "节点标签")
 	if err := flags.Parse(arguments); err != nil {
 		return err
@@ -225,9 +226,11 @@ func initCommandModeNamed(
 		reader = bufio.NewReader(input)
 	}
 	if interactive {
+		// Explicit init remains the manual identity configuration entry point.
+		// The installer uses configureSetupInteractive after auto detection.
 		*platform = prompt(reader, output, "平台地址", *platform)
-		*region = prompt(reader, output, "省份代码", *region)
-		*carrier = prompt(reader, output, "运营商 ct/cu/cm", *carrier)
+		*region = prompt(reader, output, "省份申报代码（注册时平台重新核验）", *region)
+		*carrier = prompt(reader, output, "运营商（电信 ct / 联通 cu / 移动 cm / 教育网 edu，可填中文）", *carrier)
 		*ipv4 = prompt(reader, output, "公网 IPv4", *ipv4)
 		*ipv6 = prompt(reader, output, "公网 IPv6（可留空）", *ipv6)
 	}
@@ -248,8 +251,8 @@ func initCommandModeNamed(
 	}
 	config.Version = configVersion
 	config.PlatformURL = strings.TrimSuffix(strings.TrimSpace(*platform), "/")
-	config.Region = strings.ToLower(strings.TrimSpace(*region))
-	config.Carrier = strings.ToLower(strings.TrimSpace(*carrier))
+	config.Region = normalizeRegionCode(*region)
+	config.Carrier = normalizeCarrierCode(*carrier)
 	config.PublicIPv4 = strings.TrimSpace(*ipv4)
 	config.PublicIPv6 = strings.TrimSpace(*ipv6)
 	config.Port = *port
@@ -327,6 +330,9 @@ func setupCommandMode(
 			if readErr != nil && !errors.Is(readErr, io.EOF) {
 				return readErr
 			}
+			if errors.Is(readErr, io.EOF) && strings.TrimSpace(answer) == "" {
+				return errors.New("未收到安装确认，配置已保存，节点尚未注册或启动")
+			}
 			switch strings.ToLower(strings.TrimSpace(answer)) {
 			case "":
 				goto confirmed
@@ -334,28 +340,19 @@ func setupCommandMode(
 				fmt.Fprintln(output, "配置已保存，但节点尚未注册或启动。")
 				return nil
 			case "e":
-				if err := initCommandModeNamed(path, nil, reader, output, true, "init"); err != nil {
-					return err
-				}
-				if err := configureLimitsInteractive(path, reader, output); err != nil {
+				if err := configureSetupInteractive(path, reader, output); err != nil {
 					return err
 				}
 				config, err = loadConfig(path)
 				if err != nil {
 					return err
 				}
-				config.AccessMode = strings.ToLower(prompt(
-					reader, output, "访问模式 public/private/paused", config.AccessMode,
-				))
-				config.Availability = strings.ToLower(prompt(
-					reader, output, "可用时间 always 或 HH:MM-HH:MM", config.Availability,
-				))
-				config.Timezone = prompt(reader, output, "时区", config.Timezone)
-				config.UpdateMode = strings.ToLower(prompt(
-					reader, output, "更新模式 automatic/manual", config.UpdateMode,
-				))
-				if err := saveConfig(path, config); err != nil {
-					return err
+				if runSecurityPreflight(config).severe() && config.AccessMode == "public" {
+					config.AccessMode = "private"
+					if err := saveConfig(path, config); err != nil {
+						return err
+					}
+					fmt.Fprintln(output, "[!] 安全预检仍有严重项，节点保持 private。")
 				}
 			default:
 				fmt.Fprintln(output, "请输入 Enter、E 或 Q。")
@@ -387,7 +384,7 @@ confirmed:
 		}
 		config = registered
 		fmt.Fprintf(output, "节点注册成功，Route Key: %s\n", config.RouteKey)
-		if config.AdmissionStatus == "observing" {
+		if config.Carrier != "edu" && config.AdmissionStatus == "observing" {
 			fmt.Fprintln(output, "节点正在观察期；Route Key 可立即使用，通过连续健康检查后自动加入公共调度。")
 		}
 	} else {
@@ -466,6 +463,8 @@ func prepareSetupArguments(
 	if !carrierSet {
 		carrier = config.Carrier
 	}
+	region = normalizeRegionCode(region)
+	carrier = normalizeCarrierCode(carrier)
 	if !ipv4Set {
 		ipv4 = config.PublicIPv4
 	}
@@ -473,16 +472,78 @@ func prepareSetupArguments(
 		ipv6 = config.PublicIPv6
 	}
 
-	if region == "" || carrier == "" || (ipv4 == "" && ipv6 == "") {
+	if config.NodeID == "" || region == "" || carrier == "" || (ipv4 == "" && ipv6 == "") {
 		fmt.Fprintln(output, "正在自动检测公网地址、地区和运营商……")
 		detected, err := detectNodeSetup(platform)
 		if err != nil {
 			return nil, err
 		}
-		if ipv4 == "" {
+		if len(detected.Families) > 0 {
+			families := []detectionResponse{}
+			for _, value := range detected.Families {
+				if (value.Family == "v4" && ipv4Set && ipv4 == "") || (value.Family == "v6" && ipv6Set && ipv6 == "") {
+					continue
+				}
+				families = append(families, value)
+			}
+			if len(families) == 2 && families[0].Carrier != "" && families[1].Carrier != "" && families[0].Carrier != families[1].Carrier && carrier == "" {
+				fmt.Fprintf(output, "IPv4：%s；IPv6：%s。一个节点只能登记一个运营商。\n", carrierNames[families[0].Carrier], carrierNames[families[1].Carrier])
+				if !interactive {
+					return nil, errors.New("IPv4和IPv6运营商不同；请用 --carrier 选择要提供的网络")
+				}
+				carrier = normalizeCarrierCode(prompt(reader, output, "选择运营商（ct电信/cu联通/cm移动/edu教育网）", families[0].Carrier))
+			}
+			selected := detectedEnvironment{}
+			for _, value := range families {
+				if carrier != "" && value.Carrier != "" && value.Carrier != carrier {
+					fmt.Fprintf(output, "[i] %s属于%s，本次不登记该地址。\n", displayDetectionFamily(value.Family), carrierNames[value.Carrier])
+					if value.Family == "v4" && !ipv4Set {
+						ipv4 = ""
+						prepared = append(prepared, "--ipv4", "")
+					}
+					if value.Family == "v6" && !ipv6Set {
+						ipv6 = ""
+						prepared = append(prepared, "--ipv6", "")
+					}
+					continue
+				}
+				if selected.Region != "" && value.Region != "" && value.Region != selected.Region {
+					return nil, errors.New("IPv4和IPv6识别到不同省份；请核实地址，或用 --ipv4 '' / --ipv6 '' 仅登记其中一种协议")
+				}
+				if value.Family == "v4" {
+					selected.IPv4 = value.Address
+				} else {
+					selected.IPv6 = value.Address
+				}
+				if selected.CountryCode == "" {
+					selected.CountryCode = value.CountryCode
+				}
+				if selected.Region == "" {
+					selected.Region = value.Region
+				}
+				if selected.Carrier == "" {
+					selected.Carrier = value.Carrier
+				}
+			}
+			if selected.IPv4 == "" && selected.IPv6 == "" {
+				return nil, errors.New("没有符合所选运营商的公网地址，不能通过手填覆盖网络归属校验")
+			}
+			detected = selected
+		}
+		country := strings.ToUpper(strings.TrimSpace(detected.CountryCode))
+		if country != "" && country != "CN" && country != "HK" && country != "MO" && country != "TW" {
+			return nil, fmt.Errorf("平台检测到节点位于 %s，当前节点注册仅支持中国省级地区；不能将海外 IP 登记为国内省份。这台服务器仍可运行 /run 作为测速请求方", country)
+		}
+		if detected.Region != "" && region != "" && region != detected.Region {
+			return nil, errors.New("申报省份与平台检测不一致；请核实公网 IP 的归属，不能通过手填覆盖地区校验")
+		}
+		if detected.Carrier != "" && carrier != "" && carrier != detected.Carrier {
+			return nil, errors.New("申报运营商与平台检测不一致；ct=电信、cu=联通、cm=移动、edu=教育网")
+		}
+		if ipv4 == "" && !ipv4Set {
 			ipv4 = detected.IPv4
 		}
-		if ipv6 == "" {
+		if ipv6 == "" && !ipv6Set {
 			ipv6 = detected.IPv6
 		}
 		if region == "" {
@@ -491,18 +552,30 @@ func prepareSetupArguments(
 		if carrier == "" {
 			carrier = detected.Carrier
 		}
+		region = normalizeRegionCode(region)
+		carrier = normalizeCarrierCode(carrier)
 		fmt.Fprintf(output, "检测结果: IPv4 %s / IPv6 %s / 地区 %s (%s) / 运营商 %s (%s)\n",
 			emptyDash(ipv4), emptyDash(ipv6), emptyDash(regionNames[region]), emptyDash(region),
 			emptyDash(carrierNames[carrier]), emptyDash(carrier))
 	}
+	manualClaim := false
 	if region == "" && interactive {
-		region = prompt(reader, output, "无法自动识别省份，请输入省份代码", "")
+		region = prompt(reader, output, "无法自动识别省份，请输入申报代码（注册时平台会按 IP 重新核验）", "")
+		manualClaim = strings.TrimSpace(region) != ""
 	}
 	if carrier == "" && interactive {
-		carrier = prompt(reader, output, "无法自动识别运营商，请输入 ct/cu/cm", "")
+		carrier = prompt(reader, output, "无法自动识别运营商（电信 ct / 联通 cu / 移动 cm / 教育网 edu，可填中文）", "")
+		manualClaim = manualClaim || strings.TrimSpace(carrier) != ""
 	}
+	region = normalizeRegionCode(region)
+	carrier = normalizeCarrierCode(carrier)
 	if region == "" || carrier == "" {
-		return nil, errors.New("无法自动识别地区或运营商；请使用 --region 和 --carrier 明确指定")
+		return nil, errors.New("无法自动识别地区或运营商；请使用 --region 和 --carrier 明确指定（注册时仍会按公网 IP、ASN 和所有权核验）")
+	}
+	if manualClaim {
+		// A manual value is only a registration claim. The platform performs
+		// an independent IP, ownership and carrier check before admission.
+		fmt.Fprintln(output, "[!] 地区和运营商为申报值；注册时平台会按公网 IP、ASN 和所有权重新核验，核验失败不会进入公共调度。")
 	}
 	prepared = appendSetupFlag(prepared, "--region", region)
 	prepared = appendSetupFlag(prepared, "--carrier", carrier)
@@ -511,31 +584,69 @@ func prepareSetupArguments(
 	return prepared, nil
 }
 
+func displayDetectionFamily(family string) string {
+	if family == "v6" {
+		return "IPv6"
+	}
+	return "IPv4"
+}
+
 func printSetupSummary(output io.Writer, config Config) {
+	if config.Carrier == "edu" {
+		fmt.Fprintln(output, "教育网建设中：仅支持Route Key定向测速。public用于公开展示地图覆盖，暂不参与公共测速；private不展示。")
+	}
+	registrationStatus := "待平台核验（本地配置不代表注册成功）"
+	if config.NodeID != "" {
+		registrationStatus = "已注册"
+	}
 	fmt.Fprintf(output, `
 SpeedQuality 节点配置
 
+注册状态：     %s
 公网 IPv4：    %s
 IPv6：         %s
 地区：         %s (%s)
 运营商：       %s (%s)
 所有权验证端口：%d/TCP（仅注册时临时监听）
 临时租约端口：  50000-59999/TCP（云安全组允许，主机按来源临时放行）
-公开调度：     %s
+访问模式：     %s
 最高档位：     %d Mbps
 最大并发：     %d
 每日公共额度： %s
 每日总额度：   %s
-自动更新：     %s
+更新方式：     %s
 运行时间：     %s (%s)
 服务账户：     speedquality
 运行上报：     健康、容量、可用状态和总流量
 攻击来源上报： 关闭
 
-`, emptyDash(config.PublicIPv4), emptyDash(config.PublicIPv6), regionNames[config.Region], config.Region,
-		carrierNames[config.Carrier], config.Carrier, config.Port, config.AccessMode, config.MaxMbps,
+`, registrationStatus, emptyDash(config.PublicIPv4), emptyDash(config.PublicIPv6), regionNames[config.Region], config.Region,
+		carrierNames[config.Carrier], config.Carrier, config.Port, accessModeDescription(config.AccessMode, config.Carrier), config.MaxMbps,
 		config.MaxConcurrency, formatByteLimit(config.DailyPublicBytes), formatByteLimit(config.DailyTotalBytes),
-		config.UpdateChannel, config.Availability, config.Timezone)
+		updateModeDescription(config), config.Availability, config.Timezone)
+}
+
+func accessModeDescription(mode string, carriers ...string) string {
+	if mode == "public" && len(carriers) > 0 && carriers[0] == "edu" {
+		return "public（公开地图覆盖；测速仍需Route Key）"
+	}
+	switch mode {
+	case "public":
+		return "public（公开共享，也可通过 Route Key 自用）"
+	case "private":
+		return "private（仅持有 Route Key 的用户可使用）"
+	case "paused":
+		return "paused（暂停所有新测速）"
+	default:
+		return mode
+	}
+}
+
+func updateModeDescription(config Config) string {
+	if config.UpdateMode == "manual" {
+		return "manual（手动检查和安装更新）"
+	}
+	return "automatic（自动安装签名更新，" + config.UpdateChannel + " 通道）"
 }
 
 func registrationIdentityChanged(left, right Config) bool {
@@ -1101,13 +1212,66 @@ WantedBy=timers.target
 	return nil
 }
 
-func configureLimitsInteractive(path string, reader *bufio.Reader, output io.Writer) error {
+func configureSetupInteractive(path string, reader *bufio.Reader, output io.Writer) error {
 	config, err := loadConfig(path)
 	if err != nil {
 		return err
 	}
+	port, err := strconv.Atoi(prompt(reader, output, "所有权验证端口（50000-59999）", strconv.Itoa(config.Port)))
+	if err != nil || port < 50000 || port > 59999 {
+		return errors.New("服务端口必须在 50000 到 59999 之间")
+	}
+	if port != config.Port && !portAvailable(port) {
+		return fmt.Errorf("端口 %d 已被占用，请选择其他端口", port)
+	}
+	config.Port = port
+	if err := promptBasicLimits(&config, reader, output); err != nil {
+		return err
+	}
+	config.AccessMode = promptAccessMode(reader, output, config.AccessMode, config.Carrier)
+	fmt.Fprintln(output, "更新方式：1) 自动安装经过签名的 stable 更新  2) 手动检查和安装")
+	updateDefault := "1"
+	if config.UpdateMode == "manual" {
+		updateDefault = "2"
+	}
+	switch value := strings.ToLower(prompt(reader, output, "更新方式", updateDefault)); value {
+	case "1", "automatic":
+		config.UpdateMode = "automatic"
+	case "2", "manual":
+		config.UpdateMode = "manual"
+	default:
+		return errors.New("更新方式请选择 1 或 2")
+	}
+	if err := saveConfig(path, config); err != nil {
+		return err
+	}
+	fmt.Fprintln(output, "设置已保存；地区、运营商和公网地址将在注册时由平台核验。")
+	return nil
+}
+
+func promptAccessMode(reader *bufio.Reader, output io.Writer, current string, carriers ...string) string {
+	publicLabel := "公开共享，也可自用"
+	if len(carriers) > 0 && carriers[0] == "edu" {
+		publicLabel = "公开地图覆盖，测速仍需Route Key"
+	}
+	fmt.Fprintf(output, "访问模式：1) %s  2) 仅持有 Route Key 的用户可用  3) 暂停新测速\n", publicLabel)
+	defaults := map[string]string{"public": "1", "private": "2", "paused": "3"}
+	value := strings.ToLower(prompt(reader, output, "访问模式", defaults[current]))
+	switch value {
+	case "1":
+		return "public"
+	case "2":
+		return "private"
+	case "3":
+		return "paused"
+	default:
+		return value
+	}
+}
+
+func promptBasicLimits(config *Config, reader *bufio.Reader, output io.Writer) error {
 	speed, err := strconv.Atoi(prompt(
-		reader, output, "最高档位 100/200/400", strconv.Itoa(config.MaxMbps),
+		reader, output, "最高档位 100/200/400 Mbps", strconv.Itoa(config.MaxMbps),
 	))
 	if err != nil {
 		return errors.New("最高档位必须是数字")
@@ -1118,29 +1282,26 @@ func configureLimitsInteractive(path string, reader *bufio.Reader, output io.Wri
 	if err != nil {
 		return errors.New("最大并发必须是数字")
 	}
-	reserve, err := strconv.Atoi(prompt(
-		reader, output, "提供者保留并发", strconv.Itoa(config.ReserveConcurrency),
-	))
-	if err != nil {
-		return errors.New("保留并发必须是数字")
-	}
-	daily, err := parseByteLimit(prompt(
-		reader, output, "每日公共流量，例如 20GB", formatByteLimit(config.DailyPublicBytes),
-	))
-	if err != nil {
-		return err
-	}
 	total, err := parseByteLimit(prompt(
-		reader, output, "每日总流量，例如 40GB", formatByteLimit(config.DailyTotalBytes),
+		reader, output, "每日总流量（公共和自用合计，例如 100GB）", formatByteLimit(config.DailyTotalBytes),
 	))
 	if err != nil {
 		return err
 	}
 	config.MaxMbps = speed
 	config.MaxConcurrency = concurrency
-	config.ReserveConcurrency = reserve
-	config.DailyPublicBytes = daily
 	config.DailyTotalBytes = total
+	return nil
+}
+
+func configureLimitsInteractive(path string, reader *bufio.Reader, output io.Writer) error {
+	config, err := loadConfig(path)
+	if err != nil {
+		return err
+	}
+	if err := promptBasicLimits(&config, reader, output); err != nil {
+		return err
+	}
 	if err := saveConfig(path, config); err != nil {
 		return err
 	}
@@ -1193,11 +1354,11 @@ SpeedQuality 节点管理
 				fmt.Fprintf(output, "[X] %v\n", registerErr)
 			}
 		case "5":
-			defaultMode := "public"
+			defaultMode, carrier := "public", ""
 			if current, loadErr := loadConfig(configPath()); loadErr == nil {
-				defaultMode = current.AccessMode
+				defaultMode, carrier = current.AccessMode, current.Carrier
 			}
-			mode := prompt(reader, output, "访问模式 public/private/paused", defaultMode)
+			mode := promptAccessMode(reader, output, defaultMode, carrier)
 			if err := updateAccess(configPath(), mode, output); err != nil {
 				fmt.Fprintf(output, "[X] %v\n", err)
 			}

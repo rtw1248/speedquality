@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -43,7 +46,15 @@ type TargetGroup struct {
 	Candidates []Candidate `json:"candidates"`
 }
 
+type NodeInfo struct {
+	City       string `json:"city"`
+	CityStatus string `json:"city_status"`
+	Source     string `json:"source"`
+	Proof      string `json:"proof,omitempty"`
+}
+
 type Candidate struct {
+	NodeInfo *NodeInfo      `json:"node_info,omitempty"`
 	ID       string         `json:"id"`
 	Address  string         `json:"address"`
 	Port     int            `json:"port"`
@@ -154,10 +165,24 @@ func (lease Lease) validate(now time.Time) error {
 }
 
 func validCarrier(value string) bool {
-	return value == "ct" || value == "cu" || value == "cm"
+	return value == "ct" || value == "cu" || value == "cm" || value == "edu"
 }
 
 func (candidate Candidate) validate(family string) error {
+	if info := candidate.NodeInfo; info != nil {
+		if utf8.RuneCountInString(info.City) > 48 || (info.CityStatus != "verified" && info.CityStatus != "reported" && info.CityStatus != "unknown" && info.CityStatus != "conflict") ||
+			(info.Source != "third_party" && info.Source != "community" && info.Source != "static") {
+			return errors.New("invalid node information")
+		}
+		for _, character := range info.City {
+			if !unicode.IsLetter(character) && !unicode.IsMark(character) && !strings.ContainsRune(" .·'-", character) {
+				return errors.New("invalid node city")
+			}
+		}
+		if _, err := hex.DecodeString(info.Proof); err != nil || len(info.Proof) != 64 {
+			return errors.New("invalid node information proof")
+		}
+	}
 	if !validIdentifier(candidate.ID, 8, 96) {
 		return errors.New("invalid id")
 	}

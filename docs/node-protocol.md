@@ -161,8 +161,8 @@ GET /.well-known/speedquality/ownership
 | 端口 | `8080` |
 | 最高档位 | `200` |
 
-当前公共测速只接收 `ct`（电信）、`cu`（联通）和 `cm`（移动）三类节点，暂不接收教育网或
-其他运营商代码。
+当前公共测速和`STATIC_NODES`只接收`ct`（电信）、`cu`（联通）、`cm`（移动）。
+`sq-node`另支持`edu`（教育网），仅通过Route Key定向使用，详见[sq-node说明](sq-node.md#教育网节点与地图)。
 
 将节点加入 SpeedQuality 的 `STATIC_NODES` 配置：
 
@@ -224,3 +224,19 @@ curl -fsS -X POST "$SQ_NODE_ORIGIN/release?key=$SQ_NODE_KEY"
 以上项目通过后，把配置加入 SpeedQuality 即可进行完整 Bash 测速。要加入平台调度，不应把
 社区 `sq-node` 手工写入 `STATIC_NODES`；请改用 `sq-node register`，让平台签发节点凭据并
 通过认证心跳和测速反馈管理状态。
+
+## 可选节点快照（v1.3.0）
+
+客户端在租约或任务请求中发送`X-SQ-Node-Info: 1`时，可接收候选节点的`node_info`：
+
+```json
+{"city":"武汉","city_status":"reported","source":"third_party","proof":"<64位十六进制签名>"}
+```
+
+`city_status`为`verified/reported/unknown/conflict`；`source`为`third_party/community/static`。
+城市仅允许最多48个文字字符和有限地名标点，不接受IP、控制字符或HTML。`proof`由平台签发，
+绑定会话、省份、IP协议、运营商、节点ID和快照内容。探针只能把实际激活成功候选的快照写入结果，
+并设置`node_used: true`；节点准备失败时保留健康反馈用的ID，但`node_used: false`。
+
+未声明能力的旧客户端收到的租约不含新增字段，兼容严格JSON解析。新客户端也能接受不提供
+快照的旧平台。旧客户端不支持教育网定向测速，需要升级至v1.3.0。

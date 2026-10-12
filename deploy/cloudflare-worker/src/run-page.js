@@ -73,6 +73,7 @@ export function renderRunPage({ origin, projectUrl, nqEnabled, scriptNonce }) {
     <pre><code>${escapeHTML(command)} -p hb -s 100 -v4</code></pre>
   </section>
   <footer>
+    <a href="/nodes">节点地图 · 查看覆盖与贡献节点</a>
     ${projectUrl ? `<a href="${escapeHTML(projectUrl)}" target="_blank" rel="noopener noreferrer">GitHub项目链接</a>` : ""}
     <a href="/run.sh">查看脚本源码</a>
   </footer>

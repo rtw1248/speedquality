@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -186,9 +187,102 @@ func TestSetupAutoDetectionSuppliesIdentityAndSafeDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if config.PublicIPv4 != "8.8.8.8" || config.PublicIPv6 != "2001:4860:4860::8888" ||
-		config.Region != "hb" || config.Carrier != "ct" || config.MaxMbps != 100 ||
-		config.MaxConcurrency != 1 || config.DailyPublicBytes != 10_000_000_000 {
+		config.Region != "hb" || config.Carrier != "ct" || config.MaxMbps != 200 ||
+		config.MaxConcurrency != 5 || config.DailyPublicBytes != 10_000_000_000 ||
+		config.DailyTotalBytes != 100_000_000_000 {
 		t.Fatalf("auto config=%+v", config)
+	}
+}
+
+func TestSetupRejectsForeignAddressEvenWhenProvinceIsClaimed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node.json")
+	previousDetection := detectNodeSetup
+	detectNodeSetup = func(string) (detectedEnvironment, error) {
+		return detectedEnvironment{
+			IPv4: "8.8.8.8", CountryCode: "JP",
+		}, nil
+	}
+	t.Cleanup(func() { detectNodeSetup = previousDetection })
+	var output bytes.Buffer
+	_, err := prepareSetupArguments(path, []string{
+		"--platform", "https://sq.example", "--region", "hb", "--carrier", "ct",
+	}, bufio.NewReader(strings.NewReader("")), &output, false)
+	if err == nil || !strings.Contains(err.Error(), "不能将海外 IP 登记为国内省份") {
+		t.Fatalf("foreign claim error=%v output=%s", err, output.String())
+	}
+	if strings.Contains(output.String(), "请输入") {
+		t.Fatalf("unsupported country prompted for a domestic province: %s", output.String())
+	}
+}
+
+func TestSetupManualIdentityClaimsRemainUnverifiedAndExplicitIPv6DisableIsPreserved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node.json")
+	previous := detectNodeSetup
+	detectNodeSetup = func(string) (detectedEnvironment, error) {
+		return detectedEnvironment{IPv4: "8.8.8.8", IPv6: "2001:4860:4860::8888", CountryCode: "CN"}, nil
+	}
+	t.Cleanup(func() { detectNodeSetup = previous })
+	var output bytes.Buffer
+	arguments, err := prepareSetupArguments(path, []string{"--platform", "https://sq.example", "--ipv6=", "--port", "51234"},
+		bufio.NewReader(strings.NewReader("湖北\n中国电信\n")), &output, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := initCommandModeNamed(path, arguments, strings.NewReader(""), &output, false, "setup"); err != nil {
+		t.Fatal(err)
+	}
+	config, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Region != "hb" || config.Carrier != "ct" || config.PublicIPv6 != "" || config.NodeID != "" {
+		t.Fatalf("manual identity or disabled family lost: %+v", config)
+	}
+	printSetupSummary(&output, config)
+	for _, expected := range []string{"电信 ct / 联通 cu / 移动 cm", "申报值", "待平台核验"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("missing %q in %s", expected, output.String())
+		}
+	}
+}
+
+func TestSetupOptionsPreserveIdentityAndHiddenLimitsAndRejectBusyPort(t *testing.T) {
+	path, config, _ := testConfig(t)
+	config.NodeID, config.RouteKey, config.APIToken = "", "", ""
+	config.DailyTotalBytes = 20_000_000_000
+	config.Availability, config.Timezone = "08:00-18:00", "UTC"
+	if err := saveConfig(path, config); err != nil {
+		t.Fatal(err)
+	}
+	previous := portAvailable
+	portAvailable = func(port int) bool { return port == 51235 }
+	t.Cleanup(func() { portAvailable = previous })
+	var output bytes.Buffer
+	input := bufio.NewReader(strings.NewReader("51235\n200\n5\n100GB\n2\n2\n"))
+	if err := configureSetupInteractive(path, input, &output); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := config
+	want.Port, want.MaxMbps, want.MaxConcurrency, want.DailyTotalBytes = 51235, 200, 5, 100_000_000_000
+	want.AccessMode, want.UpdateMode = "private", "manual"
+	if updated != want {
+		t.Fatalf("unexpected changes to existing configuration: got %+v want %+v", updated, want)
+	}
+	for _, hidden := range []string{"平台地址 [", "省份代码 [", "公网 IPv4 [", "公网 IPv6", "提供者保留并发 [", "每日公共流量", "可用时间", "时区 ["} {
+		if strings.Contains(output.String(), hidden) {
+			t.Fatalf("unexpected prompt %q: %s", hidden, output.String())
+		}
+	}
+	if err := configureSetupInteractive(path, bufio.NewReader(strings.NewReader("51236\n")), &output); err == nil {
+		t.Fatal("busy port accepted")
+	}
+	remaining, err := loadConfig(path)
+	if err != nil || remaining != want {
+		t.Fatalf("invalid port changed saved settings: %v %+v", err, remaining)
 	}
 }
 
@@ -265,5 +359,42 @@ func TestTerminalMenuReusesItsBufferedInput(t *testing.T) {
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("config permissions: %v, %v", info, err)
+	}
+}
+
+func TestSetupSelectsEducationIPv6FromMixedNetworks(t *testing.T) {
+	previous := detectNodeSetup
+	detectNodeSetup = func(string) (detectedEnvironment, error) {
+		return detectedEnvironment{Families: []detectionResponse{
+			{Address: "8.8.8.8", Family: "v4", Region: "hb", CountryCode: "CN", Carrier: "ct"},
+			{Address: "2001:4860:4860::8888", Family: "v6", Region: "hb", CountryCode: "CN", Carrier: "edu"},
+		}}, nil
+	}
+	t.Cleanup(func() { detectNodeSetup = previous })
+	for _, args := range [][]string{{"--carrier", "教育网"}, {"--ipv4", ""}} {
+		path := filepath.Join(t.TempDir(), "node.json")
+		var output bytes.Buffer
+		arguments, err := prepareSetupArguments(path, append(args, "--platform", "https://sq.example", "--port", "51234"), bufio.NewReader(strings.NewReader("")), &output, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := initCommandModeNamed(path, arguments, strings.NewReader(""), &output, false, "setup"); err != nil {
+			t.Fatal(err)
+		}
+		config, err := loadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.Carrier != "edu" || config.PublicIPv4 != "" || config.PublicIPv6 != "2001:4860:4860::8888" {
+			t.Fatalf("mixed network selected incorrectly: %+v", config)
+		}
+		printSetupSummary(&output, config)
+		if !strings.Contains(output.String(), "暂不参与公共测速") {
+			t.Fatal(output.String())
+		}
+	}
+	_, err := prepareSetupArguments(filepath.Join(t.TempDir(), "node.json"), []string{"--platform", "https://sq.example"}, bufio.NewReader(strings.NewReader("")), io.Discard, false)
+	if err == nil || !strings.Contains(err.Error(), "运营商不同") {
+		t.Fatalf("ambiguous networks should require selection: %v", err)
 	}
 }

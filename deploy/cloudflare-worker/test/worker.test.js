@@ -370,7 +370,7 @@ function coreLease(input) {
       carrier: "ct",
       label: "湖北电信",
       candidates: [{
-        id: "0123456789abcdef0123456789abcdef",
+        id: input.community_node_id || "0123456789abcdef0123456789abcdef",
         address,
         port: 8080,
         activate: { method: "GET", url: `http://${authority}/activate` },
@@ -798,6 +798,22 @@ test("node setup detection derives address, province, and carrier without user i
     asn: 4134,
     as_organization: "CHINANET Hubei province network",
   });
+});
+
+test("foreign subdivision codes are never detected as Chinese provinces", async () => {
+  for (const cf of [
+    { country: "US", regionCode: "MO", region: "Missouri" },
+    { country: "JP", regionCode: "HB", region: "Hubei" },
+  ]) {
+    const request = new Request("https://rtw.example/api/nodes/detect", {
+      headers: { "cf-connecting-ip": "1.2.3.4" },
+    });
+    Object.defineProperty(request, "cf", { value: cf });
+    const result = await (await worker.fetch(request, {})).json();
+    assert.equal(result.country_code, cf.country);
+    assert.equal(result.region, "");
+    assert.equal(result.region_name, "");
+  }
 });
 
 test("node update endpoint exposes only the configured stable signed manifest", async () => {
@@ -1501,6 +1517,7 @@ test("share metadata and image summary preserve metric states, scope and privacy
 
 test("preview PNG is cached, read-only, compatible with old IDs, and expires with its report", async (t) => {
   const now = Math.floor(Date.now() / 1000);
+  t.mock.method(Date, "now", () => now * 1000);
   const DB = new FakeD1();
   const id = "AtFndd9_BFJU";
   DB.reports.set(id, { id, regions: "湖北", expires_at: now + 3, target_mbps: 200,
@@ -2248,4 +2265,54 @@ test("scheduled cleanup removes expired reports and their R2 snapshots", async (
   assert.equal(DB.reports.has("Current123456"), true);
   assert.equal(SNAPSHOTS.objects.has("nodequality/Expired12345.json.gz"), false);
   assert.equal(SNAPSHOTS.objects.has("nodequality/Current123456.json.gz"), true);
+});
+
+test("dual-stack metadata survives report submission without retaining proofs or extra IPs", async () => {
+  const DB = new FakeD1(), core = new FakeNodeCore();
+  const fetchCore = core.fetch.bind(core);
+  core.fetch = async request => {
+    if (new URL(request.url).pathname !== '/lease') return fetchCore(request);
+    const lease = coreLease(await request.json());
+    lease.targets[0].candidates[0].node_info = {city:'武汉',city_status:'reported',source:'third_party'};
+    return Response.json(lease);
+  };
+  const env = {DB, NODE_CORE:core, NODE_CORE_SECRET:'test-metadata-secret-at-least-16', RATE_LIMIT_SALT:'test-salt'};
+  // ip_mode=v6 is the existing protocol's dual-stack/IPv6-capable session mode.
+  const primary = (await (await worker.fetch(sessionRequest({ip_mode:'v6'}),env)).text()).trim();
+  const peer = (await (await worker.fetch(sessionRequest({ip_mode:'v6'},'2001:db8::9'),env)).text()).trim();
+  const reports = [];
+  for (const [family,token,ip] of [['v4',primary,'203.0.113.9'],['v6',peer,'2001:db8::9']]) {
+    const req = leaseRequest(token,{family},ip); req.headers.set('X-SQ-Node-Info','1');
+    const response=await worker.fetch(req,env); assert.equal(response.status,200);
+    const candidate=(await response.json()).targets[0].candidates[0];
+    const report=JSON.parse(structuredSpeedData()); report.family=family;
+    report.results[0].node_info=candidate.node_info; report.results[0].node_used=true;
+    reports.push(report);
+  }
+  const response=await worker.fetch(resultRequest(basicFields({ip_mode:'v6',speed_data:reports.map(r=>JSON.stringify(r)).join('\n')}),{
+    authorization:`Bearer ${primary}`,'x-sq-peer-session':peer,
+  }),env);
+  assert.equal(response.status,201,await response.clone().text());
+  const stored=[...DB.reports.values()][0];
+  const storedReports=JSON.parse(stored.speed_data);
+  assert.deepEqual(storedReports.map(r=>r.results[0].node_info.city),['武汉','武汉']);
+  assert.doesNotMatch(stored.speed_data,/proof|2001:db8|203\.0\.113/);
+  const copies=formatReportCopies(stored);
+  assert.match(JSON.stringify(copies),/武汉（来源标注） · 0123456789ab · 第三方/);
+});
+
+test("education tasks require a Route Key and stay bound to its node", async()=>{
+  const DB=new FakeD1(), core=new FakeNodeCore();
+  const env={DB,NODE_CORE:core,RATE_LIMIT_SALT:'test-salt'};
+  const token=(await (await worker.fetch(sessionRequest({node_route:core.routeKey}),env)).text()).trim();
+  const send=()=>worker.fetch(new Request('https://sq.example/api/node-task',{
+    method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':'203.0.113.9',authorization:`Bearer ${token}`},
+    body:JSON.stringify({region:'hb',family:'v4',carrier:'edu',action:'acquire'}),
+  }),env);
+  const response=await send(); assert.equal(response.status,200,await response.clone().text());
+  assert.equal((await response.json()).targets[0].candidates[0].id,core.nodeID);
+  const original=core.fetch.bind(core);
+  core.fetch=async request=>{const response=await original(request);const value=await response.json();
+    if(value.targets)value.targets[0].candidates[0].id='f'.repeat(32);return Response.json(value);};
+  assert.equal((await send()).status,502);
 });

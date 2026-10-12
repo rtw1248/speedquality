@@ -176,6 +176,7 @@ func printReport(writer io.Writer, report Report) {
 				{upload, 18, "right", uploadColor},
 				{download, 18, "right", downloadColor},
 			}, reset)
+			printNodeInfo(writer, result)
 			continue
 		}
 		download, upload := "-", "-"
@@ -192,7 +193,29 @@ func printReport(writer io.Writer, report Report) {
 			{upload, 18, "right", uploadColor},
 			{download, 18, "right", downloadColor},
 		}, reset)
+		printNodeInfo(writer, result)
 	}
+}
+
+func printNodeInfo(writer io.Writer, result MeasurementResult) {
+	if !result.NodeUsed || len(result.NodeID) < 12 {
+		return
+	}
+	city, source := "城市未知", "来源未知"
+	if info := result.NodeInfo; info != nil {
+		if info.CityStatus == "conflict" {
+			city = "城市待核实"
+		} else if info.City != "" {
+			city = info.City
+			if info.CityStatus == "reported" {
+				city += "（来源标注）"
+			}
+		}
+		if label, ok := map[string]string{"third_party": "第三方", "community": "自建", "static": "静态节点"}[info.Source]; ok {
+			source = label
+		}
+	}
+	fmt.Fprintf(writer, "\x1b[90m      节点：%s · %s · %s%s\n", city, result.NodeID[:12], source, reset)
 }
 
 func displayCarrier(result MeasurementResult) string {
@@ -203,6 +226,8 @@ func displayCarrier(result MeasurementResult) string {
 		return "联通"
 	case "cm":
 		return "移动"
+	case "edu":
+		return "教育网"
 	default:
 		return result.Label
 	}

@@ -183,7 +183,7 @@ func TestPrepareTargetReportsTopUnreachableCandidate(t *testing.T) {
 		},
 	}
 	prepared := prepareTarget(context.Background(), "v4", target)
-	if prepared.result.Status != "failed" || prepared.result.NodeID != target.Candidates[0].ID {
+	if prepared.result.Status != "failed" || prepared.result.NodeID != target.Candidates[0].ID || prepared.result.NodeUsed || prepared.result.NodeInfo != nil {
 		t.Fatalf("unreachable result = %#v", prepared.result)
 	}
 	if prepared.result.Error != "没有可连接的候选节点" {

@@ -36,16 +36,18 @@ type Report struct {
 }
 
 type MeasurementResult struct {
-	Carrier string      `json:"carrier"`
-	Label   string      `json:"label"`
-	NodeID  string      `json:"node_id,omitempty"`
-	Address string      `json:"address,omitempty"`
-	Port    int         `json:"port,omitempty"`
-	Latency float64     `json:"latency_ms,omitempty"`
-	Status  string      `json:"status"`
-	Error   string      `json:"error,omitempty"`
-	Single  *ModeResult `json:"single,omitempty"`
-	Multi   *ModeResult `json:"multi,omitempty"`
+	NodeInfo *NodeInfo   `json:"node_info,omitempty"`
+	NodeUsed bool        `json:"node_used"`
+	Carrier  string      `json:"carrier"`
+	Label    string      `json:"label"`
+	NodeID   string      `json:"node_id,omitempty"`
+	Address  string      `json:"address,omitempty"`
+	Port     int         `json:"port,omitempty"`
+	Latency  float64     `json:"latency_ms,omitempty"`
+	Status   string      `json:"status"`
+	Error    string      `json:"error,omitempty"`
+	Single   *ModeResult `json:"single,omitempty"`
+	Multi    *ModeResult `json:"multi,omitempty"`
 }
 
 type ModeResult struct {
@@ -269,6 +271,8 @@ func prepareTarget(ctx context.Context, family string, target TargetGroup) prepa
 		)
 		result.Latency = item.latency
 		result.NodeID = item.candidate.ID
+		result.NodeUsed = true
+		result.NodeInfo = item.candidate.NodeInfo
 		result.Address = item.candidate.Address
 		result.Port = item.candidate.Port
 		return preparedTarget{

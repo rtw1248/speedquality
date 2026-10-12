@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,9 +103,26 @@ func TestLeaseValidationRejectsUnsupportedTargetAndMode(t *testing.T) {
 func TestLeaseValidationRejectsUnsupportedCarrier(t *testing.T) {
 	now := time.Now()
 	lease := validTestLease(now)
-	lease.Targets[0].Carrier = "edu"
+	lease.Targets[0].Carrier = "unknown"
 	lease.Targets[0].Label = "湖北教育网"
 	if err := lease.validate(now); err == nil {
 		t.Fatal("unsupported carrier was accepted")
+	}
+}
+
+func TestEducationLeaseAndNodeInfoValidation(t *testing.T) {
+	now := time.Now()
+	lease := validTestLease(now)
+	lease.Targets[0].Carrier = "edu"
+	info := &NodeInfo{City: "武汉", CityStatus: "verified", Source: "community", Proof: strings.Repeat("a", 64)}
+	lease.Targets[0].Candidates[0].NodeInfo = info
+	if err := lease.validate(now); err != nil {
+		t.Fatal(err)
+	}
+	for _, city := range []string{"武汉\x1b[31m", "1.2.3.4", "<script>", strings.Repeat("武", 49)} {
+		info.City = city
+		if err := lease.validate(now); err == nil {
+			t.Fatalf("unsafe city accepted: %q", city)
+		}
 	}
 }

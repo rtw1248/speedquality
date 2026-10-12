@@ -2,8 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.2.1"
-readonly FALLBACK_PROBE_VERSION="v1.2.1"
+readonly SPEEDQUALITY_VERSION="1.3.0"
+readonly FALLBACK_PROBE_VERSION="v1.3.0"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -747,7 +747,7 @@ resolve_node_route() {
   grep -Eq '"v4"' "$response_file" && NODE_ROUTE_HAS_V4=1 || NODE_ROUTE_HAS_V4=0
   grep -Eq '"v6"' "$response_file" && NODE_ROUTE_HAS_V6=1 || NODE_ROUTE_HAS_V6=0
   valid_region_name=$(region_name "$NODE_ROUTE_REGION" 2>/dev/null || true)
-  [[ -n "$valid_region_name" && "$NODE_ROUTE_CARRIER" =~ ^(ct|cu|cm)$ &&
+  [[ -n "$valid_region_name" && "$NODE_ROUTE_CARRIER" =~ ^(ct|cu|cm|edu)$ &&
         "$NODE_ROUTE_MAX_MBPS" =~ ^(100|200|400)$ ]] \
     || die "节点服务返回了无效的 Route Key 信息"
   ((NODE_ROUTE_HAS_V4 == 1 || NODE_ROUTE_HAS_V6 == 1)) \
@@ -1559,6 +1559,7 @@ request_node_lease() {
       --write-out '%{http_code}' \
       -X POST \
       -H "Authorization: Bearer $session_token" \
+      -H 'X-SQ-Node-Info: 1' \
       -H 'Content-Type: application/x-www-form-urlencoded' \
       --data-urlencode "region=$region" \
       --data-urlencode "family=$family" \
@@ -1746,6 +1747,9 @@ publish_result() {
   fi
   if [[ -n "$SESSION_TOKEN" ]]; then
     auth_args=(-H "Authorization: Bearer $SESSION_TOKEN")
+  fi
+  if [[ -n "$SESSION_TOKEN_V6" && "$SESSION_TOKEN_V6" != "$SESSION_TOKEN" ]]; then
+    auth_args+=(-H "X-SQ-Peer-Session: $SESSION_TOKEN_V6")
   fi
 
   : > "$clean_limited"
