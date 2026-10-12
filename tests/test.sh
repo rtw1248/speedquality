@@ -1083,6 +1083,44 @@ test_report_failure_falls_back_to_image() {
   pass '分享服务失败时保留终端结果'
 }
 
+test_github_default_and_platform_overrides() {
+  local mock_bin="$TEST_DIR/mock-github-platform-bin"
+  local scenario expected_base service_base report_base log output
+  mkdir -p "$mock_bin"
+  ln -s "$FIXTURES/mock-platform-curl.sh" "$mock_bin/curl"
+  for scenario in default service_override report_override; do
+    service_base=""
+    report_base=""
+    expected_base="https://sq.yolo2.cc"
+    case "$scenario" in
+      service_override)
+        service_base="https://service.example"
+        report_base="https://unused.example"
+        expected_base="$service_base"
+        ;;
+      report_override)
+        report_base="https://reports.example"
+        expected_base="$report_base"
+        ;;
+    esac
+    log="$TEST_DIR/github-$scenario.log"
+    output="$TEST_DIR/github-$scenario.out"
+    env PATH="$mock_bin:$PATH" \
+      SPEEDQUALITY_SERVICE_BASE="$service_base" SPEEDQUALITY_REPORT_BASE="$report_base" \
+      SPEEDQUALITY_PROBE_BIN="$MOCK_PROBE" \
+      SPEEDQUALITY_HAS_IPV4=1 SPEEDQUALITY_HAS_IPV6=0 \
+      MOCK_PLATFORM_LOG="$log" MOCK_PLATFORM_LEASE_DIR="$LEASE_DIR" \
+      MOCK_PLATFORM_EXPECTED_BASE="$expected_base" \
+      MOCK_PLATFORM_REPORT_URL="$expected_base/r/AbCdEfGhIjKl" \
+      bash "$RUNNER" -p hb -s 100 -v4 >"$output" 2>&1
+    assert_line "$log" 'session -4'
+    assert_line "$log" 'lease v4 -4 Bearer abcdefghijklmnopqrstuvwxyzABCDEFGH12345678'
+    assert_line "$log" 'report -4 Bearer abcdefghijklmnopqrstuvwxyzABCDEFGH12345678'
+    assert_contains "$output" "分享报告: $expected_base/r/AbCdEfGhIjKl"
+  done
+  pass 'GitHub 原始脚本默认连接官方平台，并保留自定义平台地址优先级'
+}
+
 test_worker_injected_report_base() {
   local injected="$TEST_DIR/run-injected.sh"
   sed "s|__SPEEDQUALITY_REPORT_BASE__|$REPORT_BASE|g" "$RUNNER" > "$injected"
@@ -1185,6 +1223,7 @@ test_broad_mask_is_rejected
 test_nodequality_snapshot_is_sanitized_and_allowlisted
 test_nodequality_archive_member_limit
 test_report_failure_falls_back_to_image
+test_github_default_and_platform_overrides
 test_worker_injected_report_base
 test_worker_injected_node_installer_help
 test_version_and_safe_cleanup

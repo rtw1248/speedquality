@@ -27,6 +27,15 @@ bash <(curl -fsSL https://sq.yolo2.cc/run)
 curl -fsSL https://sq.yolo2.cc/run | env TERM=xterm bash
 ```
 
+也可以直接从 GitHub 获取脚本，适合在帖子中使用 GitHub 链接：
+
+```bash
+bash <(curl -fsSL https://github.com/rtw1248/speedquality/raw/refs/heads/main/run.sh)
+```
+
+两种入口的参数相同，均连接 SpeedQuality 平台获取测速节点、下载测速程序并生成报告。
+GitHub 入口也支持在命令末尾添加 `-p hb`、`-s 100`、`-v4` 等参数。
+
 不传参数时，脚本会按当前 SSH 连接来源 IP 所在省份直接测速。检测到其他 SQ 任务或预计流量达到确认门槛时，会额外提示。
 自动识别成功时只在测速摘要中显示省份；需要提示 SSH 来源时，IPv4 使用 `119.98.*.*` 这样的
 脱敏格式，IPv6 隐藏完整地址，方便直接复制终端结果。

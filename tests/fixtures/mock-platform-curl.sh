@@ -60,6 +60,10 @@ while (($#)); do
 done
 
 [[ -n "$output_file" && -n "$url" && -n "${MOCK_PLATFORM_LOG:-}" ]]
+if [[ -n "${MOCK_PLATFORM_EXPECTED_BASE:-}" && "$url" != "${MOCK_PLATFORM_EXPECTED_BASE%/}/"* ]]; then
+  printf 'Unexpected platform URL: %s\n' "$url" >&2
+  exit 99
+fi
 case "$url" in
   */api/time)
     if [[ "$output_file" == /dev/null ]]; then
