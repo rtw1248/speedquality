@@ -137,14 +137,24 @@ func writeResult(path string, encoded []byte, appendOutput bool) error {
 
 func printReport(writer io.Writer, report Report) {
 	family := displayFamily(report.Family)
+	nodes := make([]string, len(report.Results))
+	hasNodes := false
+	for index, result := range report.Results {
+		nodes[index] = reportNodeDescription(result)
+		hasNodes = hasNodes || nodes[index] != ""
+	}
 	fmt.Fprintln(writer)
-	writeColumns(writer, []tableColumn{
+	headings := []tableColumn{
 		{family, 8, "right", cyan},
 		{"延迟", 10, "right", cyan},
 		{"单线程上传", 18, "right", cyan},
 		{"单线程下载", 18, "right", cyan},
-	}, reset)
-	for _, result := range report.Results {
+	}
+	if hasNodes {
+		headings = append(headings, tableColumn{"节点", 0, "left", cyan})
+	}
+	writeColumns(writer, headings, reset)
+	for index, result := range report.Results {
 		carrier := displayCarrier(result)
 		if result.Status != "ok" {
 			latency := "-"
@@ -170,13 +180,16 @@ func printReport(writer io.Writer, report Report) {
 					uploadColor = speedColor(result.Single.UploadMbps, report.TargetMbps)
 				}
 			}
-			writeColumns(writer, []tableColumn{
+			columns := []tableColumn{
 				{carrier, 8, "right", cyan},
 				{latency, 10, "right", latencyCellColor},
 				{upload, 18, "right", uploadColor},
 				{download, 18, "right", downloadColor},
-			}, reset)
-			printNodeInfo(writer, result)
+			}
+			if hasNodes {
+				columns = append(columns, tableColumn{nodes[index], 0, "left", "\x1b[90m"})
+			}
+			writeColumns(writer, columns, reset)
 			continue
 		}
 		download, upload := "-", "-"
@@ -187,19 +200,22 @@ func printReport(writer io.Writer, report Report) {
 			downloadColor = speedColor(result.Single.DownloadMbps, report.TargetMbps)
 			uploadColor = speedColor(result.Single.UploadMbps, report.TargetMbps)
 		}
-		writeColumns(writer, []tableColumn{
+		columns := []tableColumn{
 			{carrier, 8, "right", cyan},
 			{displayLatency(result.Latency), 10, "right", latencyColor(result.Latency)},
 			{upload, 18, "right", uploadColor},
 			{download, 18, "right", downloadColor},
-		}, reset)
-		printNodeInfo(writer, result)
+		}
+		if hasNodes {
+			columns = append(columns, tableColumn{nodes[index], 0, "left", "\x1b[90m"})
+		}
+		writeColumns(writer, columns, reset)
 	}
 }
 
-func printNodeInfo(writer io.Writer, result MeasurementResult) {
+func reportNodeDescription(result MeasurementResult) string {
 	if !result.NodeUsed || len(result.NodeID) < 12 || result.NodeInfo == nil {
-		return
+		return ""
 	}
 	info := result.NodeInfo
 	city := info.City
@@ -214,7 +230,7 @@ func printNodeInfo(writer io.Writer, result MeasurementResult) {
 	if label, ok := map[string]string{"third_party": "第三方", "community": "自建", "static": "静态节点"}[info.Source]; ok {
 		parts = append(parts, label)
 	}
-	fmt.Fprintf(writer, "\x1b[90m      节点：%s%s\n", strings.Join(parts, " · "), reset)
+	return strings.Join(parts, " · ")
 }
 
 func displayCarrier(result MeasurementResult) string {

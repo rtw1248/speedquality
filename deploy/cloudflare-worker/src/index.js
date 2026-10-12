@@ -2174,6 +2174,8 @@ function renderStructuredSpeedText(value, options = {}) {
     for (const [reportIndex, report] of group.reports.entries()) {
       if (reportIndex > 0) lines.push("");
       const rows = Array.isArray(report.results) ? report.results : [];
+      const nodes = rows.map((result) => nodeDescription(result));
+      const hasNodes = nodes.some(Boolean);
       const familyValue = String(report.family || "").toLowerCase();
       const family = familyValue === "v4" ? "IPv4" : familyValue === "v6"
         ? "IPv6" : String(report.family || "").toUpperCase() || "IP";
@@ -2186,8 +2188,9 @@ function renderStructuredSpeedText(value, options = {}) {
         ansiText(padDisplay("单线程上传", 18, "right"), "1;96", colored),
         ansiText(padDisplay("单线程下载", 18, "right"), "1;96", colored),
       ];
+      if (hasNodes) headings.push(ansiText("节点", "1;96", colored));
       lines.push(headings.join("  "));
-      for (const result of rows) {
+      for (const [index, result] of rows.entries()) {
         const { carrier, latency, uploadMbps, downloadMbps, uploadValue, downloadValue } = speedRowValues(result, targetMbps);
         const columns = [
           ansiText(padDisplay(carrier, 8, "right"), "36", colored),
@@ -2195,9 +2198,8 @@ function renderStructuredSpeedText(value, options = {}) {
           ansiText(padDisplay(uploadValue, 18, "right"), speedAnsiCode(uploadMbps, targetMbps), colored),
           ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps), colored),
         ];
+        if (hasNodes) columns.push(ansiText(nodes[index], "90", colored));
         lines.push(columns.join("  "));
-        const node = nodeDescription(result);
-        if (node) lines.push(ansiText(`      节点：${node}`, "90", colored));
       }
       if (rows.some((result) => ["节点繁忙", "同一来源已有测速任务"].includes(result.error))) {
         lines.push(ansiText("  部分项目因节点繁忙或同一来源已有任务而跳过（-）。", "33", colored));
@@ -2214,19 +2216,21 @@ function renderMobileSpeedReport(report, options) {
     <h2>${escapeHtml(group.name)}</h2>
     ${group.reports.map((entry) => {
       const rows = Array.isArray(entry.results) ? entry.results : [];
+      const nodes = rows.map((result) => nodeDescription(result));
+      const hasNodes = nodes.some(Boolean);
       const familyValue = String(entry.family || "").toLowerCase();
       const family = familyValue === "v4" ? "IPv4" : familyValue === "v6" ? "IPv6" : familyValue.toUpperCase() || "IP";
       const target = TARGET_SPEEDS.has(Number(entry.target_mbps)) ? Number(entry.target_mbps) : null;
       const busy = rows.some((row) => ["节点繁忙", "同一来源已有测速任务"].includes(row.error));
-      return `<table class="mobile-speed-table" aria-label="${escapeHtml(group.name)} ${escapeHtml(family)} 单线程测速">
-        <colgroup><col class="carrier-column"><col class="latency-column"><col><col></colgroup>
-        <thead><tr><th scope="col">${escapeHtml(family)}</th><th scope="col">延迟</th><th scope="col">上传 <small>Mbps</small></th><th scope="col">下载 <small>Mbps</small></th></tr></thead>
-        <tbody>${rows.map((result) => {
+      return `<div class="mobile-table-scroll"${hasNodes ? ` tabindex="0" role="region" aria-label="${escapeHtml(group.name)} ${escapeHtml(family)} 测速结果，可左右滑动"` : ""}>
+      <table class="mobile-speed-table${hasNodes ? " has-nodes" : ""}" aria-label="${escapeHtml(group.name)} ${escapeHtml(family)} 单线程测速">
+        <colgroup><col class="carrier-column"><col class="latency-column"><col class="speed-column"><col class="speed-column">${hasNodes ? '<col>' : ''}</colgroup>
+        <thead><tr><th scope="col">${escapeHtml(family)}</th><th scope="col">延迟</th><th scope="col">上传 <small>Mbps</small></th><th scope="col">下载 <small>Mbps</small></th>${hasNodes ? '<th scope="col" class="node-column">节点</th>' : ''}</tr></thead>
+        <tbody>${rows.map((result, index) => {
           const values = speedRowValues(result, target);
-          const node = nodeDescription(result);
-          return `<tr><th scope="row">${escapeHtml(values.carrier)}</th><td>${metric(values.latency, latencyAnsiCode(result.latency_ms))}</td><td>${metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target))}</td><td>${metric(values.downloadValue, speedAnsiCode(values.downloadMbps, target))}</td></tr>${node ? `<tr class="mobile-node-info"><td colspan="4">节点：${escapeHtml(node)}</td></tr>` : ""}`;
+          return `<tr><th scope="row">${escapeHtml(values.carrier)}</th><td>${metric(values.latency, latencyAnsiCode(result.latency_ms))}</td><td>${metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target))}</td><td>${metric(values.downloadValue, speedAnsiCode(values.downloadMbps, target))}</td>${hasNodes ? `<td class="node-column">${escapeHtml(nodes[index])}</td>` : ''}</tr>`;
         }).join("")}</tbody>
-      </table>${busy ? '<p class="mobile-busy-note">部分项目因节点繁忙或同一来源已有任务而跳过（-）。</p>' : ""}`;
+      </table></div>${busy ? '<p class="mobile-busy-note">部分项目因节点繁忙或同一来源已有任务而跳过（-）。</p>' : ""}`;
     }).join("")}
   </section>`).join("");
   const target = Number(report.target_mbps);
@@ -2843,15 +2847,21 @@ export function renderReport(report, options = {}) {
       .mobile-run-command code { display:block; padding:8px; background:#0003; white-space:pre-wrap; overflow-wrap:anywhere; }
       .mobile-region { margin-top:18px; }
       .mobile-region h2 { color:#95e6ff; font-size:16px; }
+      .mobile-table-scroll { overflow-x:auto; }
+      .mobile-table-scroll + .mobile-table-scroll { margin-top:16px; }
       .mobile-speed-table { width:100%; table-layout:fixed; border-collapse:collapse; margin-top:6px; font-size:13px; font-variant-numeric:tabular-nums; }
-      .mobile-speed-table + .mobile-speed-table { margin-top:16px; }
       .mobile-speed-table .carrier-column { width:17%; }
       .mobile-speed-table .latency-column { width:23%; }
+      .mobile-speed-table.has-nodes { min-width:620px; }
+      .mobile-speed-table.has-nodes .carrier-column { width:44px; }
+      .mobile-speed-table.has-nodes .latency-column { width:56px; }
+      .mobile-speed-table.has-nodes .speed-column { width:82px; }
       .mobile-speed-table th,.mobile-speed-table td { padding:9px 2px; text-align:right; white-space:nowrap; }
       .mobile-speed-table thead th { border-bottom:1px solid var(--line); color:#95e6ff; font-weight:600; }
       .mobile-speed-table th:first-child { text-align:left; }
       .mobile-speed-table tbody th { color:#70a598; font-weight:400; }
-      .mobile-speed-table .mobile-node-info td { white-space:normal; overflow-wrap:anywhere; text-align:left; padding:0 0 8px; color:#99a9bd; font-size:11px; }
+      .mobile-speed-table .node-column { padding-left:16px; text-align:left; }
+      .mobile-speed-table td.node-column { color:#99a9bd; font-size:11px; }
       .mobile-speed-table small { display:block; font-size:10px; font-weight:400; }
       .mobile-busy-note { color:var(--warn); font-size:12px; margin:8px 0; }
       .mobile-traffic { margin:16px 0 12px; padding:12px 0; border-block:1px solid var(--line); }
