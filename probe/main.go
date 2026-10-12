@@ -207,9 +207,6 @@ func printNodeInfo(writer io.Writer, result MeasurementResult) {
 			city = "城市待核实"
 		} else if info.City != "" {
 			city = info.City
-			if info.CityStatus == "reported" {
-				city += "（来源标注）"
-			}
 		}
 		if label, ok := map[string]string{"third_party": "第三方", "community": "自建", "static": "静态节点"}[info.Source]; ok {
 			source = label

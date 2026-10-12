@@ -2298,7 +2298,7 @@ test("dual-stack metadata survives report submission without retaining proofs or
   assert.deepEqual(storedReports.map(r=>r.results[0].node_info.city),['武汉','武汉']);
   assert.doesNotMatch(stored.speed_data,/proof|2001:db8|203\.0\.113/);
   const copies=formatReportCopies(stored);
-  assert.match(JSON.stringify(copies),/武汉（来源标注） · 0123456789ab · 第三方/);
+  assert.match(JSON.stringify(copies),/武汉 · 0123456789ab · 第三方/);
 });
 
 test("education tasks require a Route Key and stay bound to its node", async()=>{

@@ -1,6 +1,8 @@
 import { normalizeNodeInfo } from "./node-info.js";
 
 const regions = new Set("bj tj he sx nm ln jl hl sh js zj ah fj jx sd ha hb hn gd gx hi cq sc gz yn xz sn gs qh nx xj hk mo tw".split(" "));
+const pendingReasons = new Set(["location_mismatch", "verification_pending", "verification_expired",
+  "node_unavailable", "no_success", "recent_failure", "success_expired"]);
 
 export function sanitizeCoverage(value) {
   if (value?.version !== 1 || !Array.isArray(value.nodes) || value.nodes.length > 4000 ||
@@ -14,6 +16,7 @@ export function sanitizeCoverage(value) {
         (node.carrier === "edu" && info.source !== "community")) continue;
     nodes.push({ id: node.id, region: node.region, carrier: node.carrier, family: node.family,
       ...info, status: node.status,
+      ...(node.status === "pending" && pendingReasons.has(node.pending_reason) ? { pending_reason: node.pending_reason } : {}),
       last_success_at: Number.isSafeInteger(node.last_success_at) && node.last_success_at > 0 ? node.last_success_at : null,
       last_checked_at: Number.isSafeInteger(node.last_checked_at) && node.last_checked_at > 0 ? node.last_checked_at : null,
       public_testing: node.carrier !== "edu" });

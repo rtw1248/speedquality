@@ -40,8 +40,8 @@ export function renderNodeMap(scriptNonce) {
         <div class="map-area">
           <div class="map-meta"><div><span class="live-dot"></span><span id="scope-label">公共节点 · IPv4 · 三网概览</span></div><span>点击省份查看详情</span><label class="region-picker"><span class="sr-only">选择地区</span><select id="region-picker" aria-label="选择地区"></select></label></div>
           <div class="map-canvas">${nodeMapGeometry}<div id="map-tooltip" class="map-tooltip" role="tooltip" hidden></div></div>
-          <div class="map-legend"><span><i class="legend-dot complete"></i><span id="complete-legend">三网齐全</span></span><span id="partial-legend"><i class="legend-dot partial"></i>部分覆盖</span><span><i class="legend-dot pending"></i>待核验</span><span><i class="legend-dot empty"></i>待点亮</span></div>
-          <div class="map-footnote">按所选网络统计近7天测速成功、归属有效的公开端点。同一地址的别名不重复计数；暂时繁忙不熄灭，私有节点不展示。</div>
+          <div class="map-legend"><span><i class="legend-dot complete"></i><span id="complete-legend">三网齐全</span></span><span id="partial-legend"><i class="legend-dot partial"></i>部分覆盖</span><span><i class="legend-dot pending"></i>已收录</span><span><i class="legend-dot empty"></i>暂无记录</span></div>
+          <div class="map-footnote">第三方与公开自建节点均参与统计，IPv4、IPv6分别点亮。绿色表示归属核验有效且近期测速正常；黄色表示已收录但暂未满足条件，展开节点列表可查看原因。地图最多延迟5分钟更新。</div>
         </div>
         <aside class="region-panel" aria-label="所选地区详情" aria-live="polite">
           <div class="region-kicker"><span>REGION DETAILS</span></div>

@@ -44,6 +44,11 @@ test('coverage whitelists public fields and hides unavailable data without inven
   assert.equal(clean.education_public_testing,false);
   assert.equal(clean.nodes[0].public_testing,false);
   assert.doesNotMatch(JSON.stringify(clean),/secret|192\.0\.2\.1|route_key|address/);
+  const pending = structuredClone(data);
+  Object.assign(pending.nodes[0], {status:'pending',pending_reason:'verification_pending'});
+  assert.equal(sanitizeCoverage(pending).nodes[0].pending_reason,'verification_pending');
+  pending.nodes[0].pending_reason='internal address 192.0.2.1';
+  assert.equal(sanitizeCoverage(pending).nodes[0].pending_reason,undefined);
   const publicEnv={NODE_CORE_SECRET:'coverage-secret',NODE_CORE:{fetch:async request=>{
     assert.equal(request.method,'GET'); assert.equal(new URL(request.url).pathname,'/coverage');
     assert.equal(request.headers.get('x-node-core-secret'),'coverage-secret');

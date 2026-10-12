@@ -38,12 +38,18 @@ export const nodeMapClient = `(() => {
       covered,count:counts.reduce((a,b)=>a+b,0)};
   }
   function stateLabel(state) {
-    return {complete:selected.carrier === 'all'?'三网齐全':'已覆盖',partial:'部分覆盖',pending:'待核验',
-      empty:'待点亮',unsupported:'暂未开放',loading:'等待数据'}[state];
+    return {complete:selected.carrier === 'all'?'三网齐全':'已覆盖',partial:'部分覆盖',pending:'已收录',
+      empty:'暂无记录',unsupported:'暂未开放',loading:'等待数据'}[state];
   }
   function cityLabel(node) {
     if (node.city_status === 'conflict') return '城市待核实';
-    return (node.city || '城市未知') + (node.city && node.city_status === 'reported' ? '（来源标注）' : '');
+    return node.city || '城市未知';
+  }
+  function nodeStatusLabel(node) {
+    if (node.status === 'verified') return '已计入覆盖';
+    return {location_mismatch:'地区或运营商归属冲突',verification_pending:'地区和运营商待核验',
+      verification_expired:'归属核验已过期',node_unavailable:'节点当前不可用',no_success:'尚无成功测速',
+      recent_failure:'最近一次测速未成功',success_expired:'近7天暂无成功测速'}[node.pending_reason] || '尚未满足点亮条件';
   }
   function dateLabel(value) {
     return value ? new Date(value * 1000).toLocaleString('zh-CN',{hour12:false}) : '尚无成功记录';
@@ -89,7 +95,7 @@ export const nodeMapClient = `(() => {
       const row = element('div','carrier-row'), heading = element('div','carrier-heading'), title = element('div','carrier-name');
       title.append(element('i',\`carrier-dot \${state}\`),document.createTextNode(carrierNames[carrier]));
       if (carrier === 'edu') title.append(element('span','small-tag','建设中'));
-      heading.append(title,element('span',\`carrier-amount \${state}\`,verified.length?\`\${verified.length}个端点\`:nodes.length?'待核验':'待点亮'));
+      heading.append(title,element('span',\`carrier-amount \${state}\`,verified.length?\`\${verified.length}个端点\`:nodes.length?'暂未点亮':'暂无记录'));
       row.append(heading);
       if (nodes.length) {
         const details = element('details','node-list');
@@ -99,7 +105,7 @@ export const nodeMapClient = `(() => {
           identity.append(element('span','node-city',cityLabel(node)));
           const code = element('code','',node.id.slice(0,12));
           code.title = \`完整编号：\${node.id}\`;
-          identity.append(code,element('small','',\`\${node.source==='community'?'自建':'第三方'} · \${node.status==='verified'?'近期成功':'待核验'} · 最近成功：\${dateLabel(node.last_success_at)}\`));
+          identity.append(code,element('small','',\`\${node.source==='community'?'自建':'第三方'} · \${nodeStatusLabel(node)} · 最近成功：\${dateLabel(node.last_success_at)}\`));
           details.append(identity);
         }
         row.append(details);
@@ -109,6 +115,7 @@ export const nodeMapClient = `(() => {
     const missing = filterCarriers().filter(carrier=>!successfulNodes(region,carrier).length);
     $('#region-gap').textContent = !loaded ? '新增节点通过验证并完成测速后，可计入覆盖。' : selected.carrier==='edu' ?
       '教育网建设中，暂未开放公共测速。' : !region.supported ? '可查看自建节点部署说明。' : missing.length ?
+      missing.some(carrier=>visibleNodes(region,carrier).length) ? '已收录节点尚未满足点亮条件，展开列表可查看原因。' :
       \`\${region.name}\${missing.map(c=>carrierNames[c]).join('、')}，等你点亮。\` : '已经点亮，也欢迎增加更多节点。';
     const copy = $('#copy-command');
     copy.disabled = !loaded || selected.carrier==='edu' || !region.supported;
@@ -127,7 +134,7 @@ export const nodeMapClient = `(() => {
       for (const node of data.nodes) byCode.get(node.region)?.nodes.push(node);
       loaded = true;
       document.body.classList.remove('map-loading');
-      $('#data-status').textContent = \`最近更新：\${dateLabel(data.generated_at)} · 近7天测速记录 · 新节点需完成验证和测速后点亮\`;
+      $('#data-status').textContent = \`最近更新：\${dateLabel(data.generated_at)} · 第三方与公开自建节点均计入 · 更新最多延迟5分钟\`;
       update();
     } catch {
       $('#data-status').textContent = '覆盖数据暂时无法加载，请稍后重试。';
