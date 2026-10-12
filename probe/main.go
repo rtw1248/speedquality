@@ -139,9 +139,13 @@ func printReport(writer io.Writer, report Report) {
 	family := displayFamily(report.Family)
 	nodes := make([]string, len(report.Results))
 	hasNodes := false
+	nodeWidth := displayWidth("节点")
 	for index, result := range report.Results {
 		nodes[index] = reportNodeDescription(result)
 		hasNodes = hasNodes || nodes[index] != ""
+		if width := displayWidth(nodes[index]); width > nodeWidth {
+			nodeWidth = width
+		}
 	}
 	fmt.Fprintln(writer)
 	headings := []tableColumn{
@@ -151,7 +155,7 @@ func printReport(writer io.Writer, report Report) {
 		{"单线程下载", 18, "right", cyan},
 	}
 	if hasNodes {
-		headings = append(headings, tableColumn{"节点", 0, "left", cyan})
+		headings = append(headings, tableColumn{"节点", nodeWidth, "center", cyan})
 	}
 	writeColumns(writer, headings, reset)
 	for index, result := range report.Results {
@@ -301,6 +305,10 @@ func padDisplay(value string, width int, align string) string {
 	}
 	if align == "right" {
 		return strings.Repeat(" ", padding) + value
+	}
+	if align == "center" {
+		left := padding / 2
+		return strings.Repeat(" ", left) + value + strings.Repeat(" ", padding-left)
 	}
 	return value + strings.Repeat(" ", padding)
 }

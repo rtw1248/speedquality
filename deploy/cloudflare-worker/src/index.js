@@ -2053,6 +2053,10 @@ function displayWidth(value) {
 function padDisplay(value, width, align = "left") {
   const text = String(value ?? "");
   const padding = Math.max(0, width - displayWidth(text));
+  if (align === "center") {
+    const left = Math.floor(padding / 2);
+    return `${" ".repeat(left)}${text}${" ".repeat(padding - left)}`;
+  }
   return align === "right" ? `${" ".repeat(padding)}${text}` : `${text}${" ".repeat(padding)}`;
 }
 
@@ -2188,7 +2192,10 @@ function renderStructuredSpeedText(value, options = {}) {
         ansiText(padDisplay("单线程上传", 18, "right"), "1;96", colored),
         ansiText(padDisplay("单线程下载", 18, "right"), "1;96", colored),
       ];
-      if (hasNodes) headings.push(ansiText("节点", "1;96", colored));
+      if (hasNodes) {
+        const nodeWidth = Math.max(displayWidth("节点"), ...nodes.map((node) => displayWidth(node)));
+        headings.push(ansiText(padDisplay("节点", nodeWidth, "center"), "1;96", colored));
+      }
       lines.push(headings.join("  "));
       for (const [index, result] of rows.entries()) {
         const { carrier, latency, uploadMbps, downloadMbps, uploadValue, downloadValue } = speedRowValues(result, targetMbps);
@@ -2861,6 +2868,7 @@ export function renderReport(report, options = {}) {
       .mobile-speed-table th:first-child { text-align:left; }
       .mobile-speed-table tbody th { color:#70a598; font-weight:400; }
       .mobile-speed-table .node-column { padding-left:16px; text-align:left; }
+      .mobile-speed-table thead .node-column { text-align:center; }
       .mobile-speed-table td.node-column { color:#99a9bd; font-size:11px; }
       .mobile-speed-table small { display:block; font-size:10px; font-weight:400; }
       .mobile-busy-note { color:var(--warn); font-size:12px; margin:8px 0; }
