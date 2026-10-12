@@ -2126,8 +2126,8 @@ export function reportPreviewModel(report) {
         label: `${CARRIER_NAMES[result.carrier]} · ${entry.family === "v4" ? "IPv4" : "IPv6"}`,
         node: nodeDescription(result) ? {
           id: result.node_id.slice(0, 12),
-          city: result.node_info?.city_status === "conflict" ? "城市待核实" : result.node_info?.city || "城市未知",
-          source: { third_party: "第三方", community: "自建", static: "静态" }[result.node_info?.source] || "未知",
+          city: result.node_info?.city_status === "conflict" ? "城市待核实" : result.node_info?.city || "",
+          source: { third_party: "第三方", community: "自建", static: "静态" }[result.node_info?.source] || "",
         } : null,
         latency: metric(values.latency, latencyAnsiCode(result.latency_ms)),
         upload: metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target)),

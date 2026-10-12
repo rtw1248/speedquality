@@ -113,7 +113,7 @@ export async function renderPreviewPNG(model) {
         let city = row.node.city;
         if ([...city].some(ch => !SHARE_FONT[20][ch])) city = "城市详见报告";
         if ([...city].length > 7) city = [...city].slice(0, 6).join("") + ".";
-        text(`${city} · ${row.node.id}`, 64, y + 23, 20, "muted");
+        text([city, row.node.id].filter(Boolean).join(" · "), 64, y + 23, 20, "muted");
         text(row.node.source, 408, y + 23, 20, "muted", "right");
       }
       const metricY = y + (row.node ? 10 : 0);

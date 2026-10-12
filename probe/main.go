@@ -198,21 +198,23 @@ func printReport(writer io.Writer, report Report) {
 }
 
 func printNodeInfo(writer io.Writer, result MeasurementResult) {
-	if !result.NodeUsed || len(result.NodeID) < 12 {
+	if !result.NodeUsed || len(result.NodeID) < 12 || result.NodeInfo == nil {
 		return
 	}
-	city, source := "城市未知", "来源未知"
-	if info := result.NodeInfo; info != nil {
-		if info.CityStatus == "conflict" {
-			city = "城市待核实"
-		} else if info.City != "" {
-			city = info.City
-		}
-		if label, ok := map[string]string{"third_party": "第三方", "community": "自建", "static": "静态节点"}[info.Source]; ok {
-			source = label
-		}
+	info := result.NodeInfo
+	city := info.City
+	if info.CityStatus == "conflict" {
+		city = "城市待核实"
 	}
-	fmt.Fprintf(writer, "\x1b[90m      节点：%s · %s · %s%s\n", city, result.NodeID[:12], source, reset)
+	parts := []string{}
+	if city != "" {
+		parts = append(parts, city)
+	}
+	parts = append(parts, result.NodeID[:12])
+	if label, ok := map[string]string{"third_party": "第三方", "community": "自建", "static": "静态节点"}[info.Source]; ok {
+		parts = append(parts, label)
+	}
+	fmt.Fprintf(writer, "\x1b[90m      节点：%s%s\n", strings.Join(parts, " · "), reset)
 }
 
 func displayCarrier(result MeasurementResult) string {

@@ -43,7 +43,7 @@ export const nodeMapClient = `(() => {
   }
   function cityLabel(node) {
     if (node.city_status === 'conflict') return '城市待核实';
-    return node.city || '城市未知';
+    return node.city || '';
   }
   function nodeStatusLabel(node) {
     if (node.status === 'verified') return '已计入覆盖';
@@ -102,7 +102,8 @@ export const nodeMapClient = `(() => {
         details.append(element('summary','',\`查看\${nodes.length}个已收录端点\`));
         for (const node of nodes) {
           const identity = element('div','node-identifiers');
-          identity.append(element('span','node-city',cityLabel(node)));
+          const city = cityLabel(node);
+          if (city) identity.append(element('span','node-city',city));
           const code = element('code','',node.id.slice(0,12));
           code.title = \`完整编号：\${node.id}\`;
           identity.append(code,element('small','',\`\${node.source==='community'?'自建':'第三方'} · \${nodeStatusLabel(node)} · 最近成功：\${dateLabel(node.last_success_at)}\`));

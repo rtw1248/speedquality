@@ -70,8 +70,8 @@ export function nodeDescription(result, short = false) {
   if (!/^[a-f0-9]{32}$/.test(result.node_id || "") ||
       !(result.node_used === true || (result.node_used == null && result.single))) return "";
   const info = normalizeNodeInfo(result.node_info);
-  const city = info?.city_status === "conflict" ? "城市待核实" : info?.city || "城市未知";
-  const source = { third_party: "第三方", community: "自建", static: "静态节点" }[info?.source] || "来源未知";
-  return short ? `${city} · ${result.node_id.slice(0, 12)}`
-    : `${city} · ${result.node_id.slice(0, 12)} · ${source}`;
+  if (!info) return "";
+  const city = info.city_status === "conflict" ? "城市待核实" : info.city;
+  const source = { third_party: "第三方", community: "自建", static: "静态节点" }[info.source];
+  return [city, result.node_id.slice(0, 12), ...(short ? [] : [source])].filter(Boolean).join(" · ");
 }

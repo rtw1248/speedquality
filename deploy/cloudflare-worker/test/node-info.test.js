@@ -35,6 +35,9 @@ test('signed node snapshot cannot be moved between sessions, families, carriers 
   const paired=reports(); await verifyReportNodeInfo(paired,env,['session-b','session-a']);
   assert.equal(paired[0].results[0].node_info.city,'武汉');
   assert.equal(nodeDescription({node_id:'a'.repeat(32),node_used:false}), '');
+  assert.equal(nodeDescription({node_id:'a'.repeat(32),single:{download_mbps:100,upload_mbps:100}}), '');
+  assert.equal(nodeDescription({node_id:'a'.repeat(32),node_used:true,
+    node_info:{city:'',city_status:'unknown',source:'third_party'}}),'aaaaaaaaaaaa · 第三方');
 });
 
 test('coverage whitelists public fields and hides unavailable data without inventing empty coverage',async()=>{
