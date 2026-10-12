@@ -62,7 +62,7 @@ export function renderNodeMap(scriptNonce) {
     <button class="dialog-close" aria-label="关闭">×</button><span class="dialog-icon">✦</span><p class="eyebrow">LIGHT UP YOUR REGION</p><h2 id="dialog-title">为湖北补充一个节点</h2><p id="dialog-description">把你愿意公开共享的节点接入SQ，为所在地区增加一个测速选择。</p><div class="contribution-steps"><div><span>01</span><strong>准备节点</strong><p>确认所在地区、运营商和可分享的带宽。</p></div><div><span>02</span><strong>部署与验证</strong><p>安装sq-node，完成地址、网络归属与可用性验证。</p></div><div><span>03</span><strong>公开共享</strong><p>选择public公开展示，通过网络归属验证并完成测速后计入覆盖。</p></div></div><p class="dialog-note">私有节点不展示。教育网节点的public模式仅公开地图覆盖，测速仍需Route Key。请仅部署你有权管理和共享的网络。</p><a class="button primary" href="https://github.com/rtw1248/speedquality/blob/main/docs/sq-node.md" target="_blank" rel="noopener">查看节点部署文档<span>↗</span></a>
   </dialog>
   <noscript><p>请启用JavaScript查看覆盖数据；也可前往<a href="/run">使用指南</a>。</p></noscript>
-  <script nonce="${scriptNonce}">(${nodeMapClient.toString()})();</script>
+  <script nonce="${scriptNonce}">${nodeMapClient}</script>
 </body>
 </html>
 `;
