@@ -10,6 +10,8 @@ export const nodeMapClient = `(() => {
   const byCode = new Map(regions.map(region => [region.code, region]));
   const selected = {region:'hb',carrier:'all',family:'v4',source:'all'};
   let loaded = false;
+  let loading = false, lastAttemptAt = 0, generatedAt = 0, previousNodes = '';
+  const refreshInterval = 60_000;
   const tooltip = $('#map-tooltip');
   function element(tag, className, content) {
     const item = document.createElement(tag);
@@ -47,14 +49,17 @@ export const nodeMapClient = `(() => {
   }
   function nodeStatusLabel(node) {
     if (node.status === 'verified') return '已计入覆盖';
-    return {location_mismatch:'地区或运营商归属冲突',verification_pending:'地区和运营商待核验',
+    return {location_mismatch:'归属信息不一致，待核实',verification_pending:'归属核验尚未完成',
       verification_expired:'归属核验已过期',node_unavailable:'节点当前不可用',no_success:'尚无成功测速',
       recent_failure:'最近一次测速未成功',success_expired:'近7天暂无成功测速'}[node.pending_reason] || '尚未满足点亮条件';
   }
   function dateLabel(value) {
     return value ? new Date(value * 1000).toLocaleString('zh-CN',{hour12:false}) : '尚无成功记录';
   }
-  function update() {
+  function update({preserveDetails = false} = {}) {
+    const openCarriers = new Set(preserveDetails ? $$('.node-list[open]').map(item => item.dataset.carrier) : []);
+    const focusedCarrier = preserveDetails && document.activeElement?.tagName === 'SUMMARY'
+      ? document.activeElement.parentElement.dataset.carrier : null;
     tooltip.hidden = true;
     let coveredCount = 0, complete = 0, count = 0;
     for (const region of regions) {
@@ -99,6 +104,8 @@ export const nodeMapClient = `(() => {
       row.append(heading);
       if (nodes.length) {
         const details = element('details','node-list');
+        details.dataset.carrier = carrier;
+        details.open = openCarriers.has(carrier);
         details.append(element('summary','',\`查看\${nodes.length}个已收录端点\`));
         for (const node of nodes) {
           const identity = element('div','node-identifiers');
@@ -113,6 +120,7 @@ export const nodeMapClient = `(() => {
       } else row.append(element('div','carrier-description',carrier==='edu'?'等待教育网节点加入':'暂无近期验证的公开节点'));
       list.append(row);
     }
+    if (focusedCarrier) $(\`details[data-carrier="\${focusedCarrier}"] summary\`)?.focus({preventScroll:true});
     const missing = filterCarriers().filter(carrier=>!successfulNodes(region,carrier).length);
     $('#region-gap').textContent = !loaded ? '新增节点通过验证并完成测速后，可计入覆盖。' : selected.carrier==='edu' ?
       '教育网建设中，暂未开放公共测速。' : !region.supported ? '可查看自建节点部署说明。' : missing.length ?
@@ -124,29 +132,50 @@ export const nodeMapClient = `(() => {
     $('#copy-status').textContent = '';
   }
   async function loadCoverage() {
-    $('#retry').hidden = true;
-    $('#data-status').textContent = '正在加载节点覆盖数据…';
+    if (loading) return;
+    loading = true;
+    lastAttemptAt = Date.now();
+    $('#refresh').disabled = true;
+    $('#refresh').textContent = '刷新中…';
+    $('#data-status').textContent = loaded ? '正在更新节点覆盖数据…' : '正在加载节点覆盖数据…';
     try {
-      const response = await fetch('/api/nodes/coverage',{headers:{Accept:'application/json'},signal:AbortSignal.timeout(15000)});
+      const response = await fetch('/api/nodes/coverage',{cache:'no-store',headers:{Accept:'application/json'},signal:AbortSignal.timeout(15000)});
       if (!response.ok) throw new Error('unavailable');
       const data = await response.json();
       if (data.version !== 1 || !Array.isArray(data.nodes) || !Number.isFinite(data.generated_at)) throw new Error('invalid');
-      for (const region of regions) region.nodes = [];
-      for (const node of data.nodes) byCode.get(node.region)?.nodes.push(node);
-      loaded = true;
-      document.body.classList.remove('map-loading');
-      $('#data-status').textContent = \`最近更新：\${dateLabel(data.generated_at)} · 第三方与公开自建节点均计入 · 更新最多延迟5分钟\`;
-      update();
+      const serializedNodes = JSON.stringify(data.nodes);
+      if (!loaded || serializedNodes !== previousNodes) {
+        for (const region of regions) region.nodes = [];
+        for (const node of data.nodes) byCode.get(node.region)?.nodes.push(node);
+        loaded = true;
+        previousNodes = serializedNodes;
+        document.body.classList.remove('map-loading');
+        update({preserveDetails:true});
+      }
+      generatedAt = data.generated_at;
+      $('#data-status').textContent = \`数据时间：\${dateLabel(generatedAt)} · 页面自动刷新 · 覆盖数据可能延迟数分钟\`;
     } catch {
-      $('#data-status').textContent = '覆盖数据暂时无法加载，请稍后重试。';
-      $('#retry').hidden = false;
+      $('#data-status').textContent = loaded
+        ? \`刷新失败，保留\${dateLabel(generatedAt)}的数据，将自动重试。\`
+        : '覆盖数据暂时无法加载，请稍后重试。';
+    } finally {
+      loading = false;
+      $('#refresh').disabled = false;
+      $('#refresh').textContent = loaded ? '刷新数据' : '重新加载';
     }
   }
-  $('#retry').addEventListener('click',loadCoverage);
+  function refreshWhenVisible() {
+    if (!document.hidden && Date.now() - lastAttemptAt >= 15_000) loadCoverage();
+  }
+  $('#refresh').addEventListener('click',loadCoverage);
+  document.addEventListener('visibilitychange',refreshWhenVisible);
+  window.addEventListener('focus',refreshWhenVisible);
+  window.addEventListener('pageshow',refreshWhenVisible);
+  setInterval(() => { if (!document.hidden) loadCoverage(); },refreshInterval);
   $('#region-picker').addEventListener('change',event=>{selected.region=event.target.value;update();});
-  for (const kind of ['carrier','family']) $$(\`[data-\${kind}]\`).forEach(button=>button.addEventListener('click',()=>{
+  for (const kind of ['carrier','family']) $$(\`button[data-\${kind}]\`).forEach(button=>button.addEventListener('click',()=>{
     selected[kind]=button.dataset[kind];
-    $$(\`[data-\${kind}]\`).forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',String(item===button));});
+    $$(\`button[data-\${kind}]\`).forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',String(item===button));});
     update();
   }));
   $('#source-filter').addEventListener('change',event=>{selected.source=event.target.value;update();});

@@ -13,7 +13,7 @@ export function renderNodeMap(scriptNonce) {
   <style>${nodeMapStyle}</style>
 </head>
 <body class="map-loading">
-  <div class="demo-banner map-data-status" role="status"><span id="data-status">正在加载节点覆盖数据…</span><button class="retry" id="retry" hidden>重新加载</button></div>
+  <div class="demo-banner map-data-status" role="status"><span id="data-status">正在加载节点覆盖数据…</span><button class="retry" id="refresh" disabled>刷新中…</button></div>
   <header class="site-header wrap">
     <a class="brand" href="#" aria-label="SpeedQuality节点地图"><span class="brand-symbol">SQ<span></span></span><span>SpeedQuality</span></a>
     <nav aria-label="主导航"><a class="nav-current" href="#">节点地图</a><a href="/run" target="_blank" rel="noopener">使用指南<span class="external">↗</span></a><a href="https://github.com/rtw1248/speedquality" target="_blank" rel="noopener">GitHub<span class="external">↗</span></a></nav>
@@ -41,7 +41,7 @@ export function renderNodeMap(scriptNonce) {
           <div class="map-meta"><div><span class="live-dot"></span><span id="scope-label">公共节点 · IPv4 · 三网概览</span></div><span>点击省份查看详情</span><label class="region-picker"><span class="sr-only">选择地区</span><select id="region-picker" aria-label="选择地区"></select></label></div>
           <div class="map-canvas">${nodeMapGeometry}<div id="map-tooltip" class="map-tooltip" role="tooltip" hidden></div></div>
           <div class="map-legend"><span><i class="legend-dot complete"></i><span id="complete-legend">三网齐全</span></span><span id="partial-legend"><i class="legend-dot partial"></i>部分覆盖</span><span><i class="legend-dot pending"></i>已收录</span><span><i class="legend-dot empty"></i>暂无记录</span></div>
-          <div class="map-footnote">第三方与公开自建节点均参与统计，IPv4、IPv6分别点亮。绿色表示归属核验有效且近期测速正常；黄色表示已收录但暂未满足条件，展开节点列表可查看原因。地图最多延迟5分钟更新。</div>
+          <div class="map-footnote">第三方与公开自建节点均参与统计，IPv4、IPv6分别点亮。绿色表示归属核验有效且近期测速正常；黄色表示已收录但暂未满足条件。列表包含筛选时发现的候选节点，测速成功与归属核验分别记录；归属信息不一致可能来自节点目录或IP库误差。页面自动刷新，覆盖数据可能延迟数分钟。</div>
         </div>
         <aside class="region-panel" aria-label="所选地区详情" aria-live="polite">
           <div class="region-kicker"><span>REGION DETAILS</span></div>
@@ -56,7 +56,7 @@ export function renderNodeMap(scriptNonce) {
       <div class="contribution-symbol" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
       <div class="contribution-copy"><h2>从你所在的地方，点亮下一块地图。</h2><p>有可分享的宽带或服务器？完成节点接入与验证，就能为当地增加一个测速选择。</p></div><button class="button contribute">了解如何贡献<span>→</span></button>
     </section>
-    <footer><div><span class="footer-brand">SQ</span> 每一次测速，都有参照。</div><p>覆盖来自平台近期观察，未收录或尚未测速的地区不代表没有节点。地图边界：<a href="https://datav.aliyun.com/portal/school/atlas/area_selector" target="_blank" rel="noopener">DataV.GeoAtlas</a></p><span>每5分钟缓存更新</span></footer>
+    <footer><div><span class="footer-brand">SQ</span> 每一次测速，都有参照。</div><p>覆盖来自平台近期观察，未收录或尚未测速的地区不代表没有节点。地图边界：<a href="https://datav.aliyun.com/portal/school/atlas/area_selector" target="_blank" rel="noopener">DataV.GeoAtlas</a></p><span>每分钟自动检查更新</span></footer>
   </main>
   <dialog id="contribute-dialog">
     <button class="dialog-close" aria-label="关闭">×</button><span class="dialog-icon">✦</span><p class="eyebrow">LIGHT UP YOUR REGION</p><h2 id="dialog-title">为湖北补充一个节点</h2><p id="dialog-description">把你愿意公开共享的节点接入SQ，为所在地区增加一个测速选择。</p><div class="contribution-steps"><div><span>01</span><strong>准备节点</strong><p>确认所在地区、运营商和可分享的带宽。</p></div><div><span>02</span><strong>部署与验证</strong><p>安装sq-node，完成地址、网络归属与可用性验证。</p></div><div><span>03</span><strong>公开共享</strong><p>选择public公开展示，通过网络归属验证并完成测速后计入覆盖。</p></div></div><p class="dialog-note">私有节点不展示。教育网节点的public模式仅公开地图覆盖，测速仍需Route Key。请仅部署你有权管理和共享的网络。</p><a class="button primary" href="https://github.com/rtw1248/speedquality/blob/main/docs/sq-node.md" target="_blank" rel="noopener">查看节点部署文档<span>↗</span></a>
