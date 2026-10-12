@@ -2053,10 +2053,6 @@ function displayWidth(value) {
 function padDisplay(value, width, align = "left") {
   const text = String(value ?? "");
   const padding = Math.max(0, width - displayWidth(text));
-  if (align === "center") {
-    const left = Math.floor(padding / 2);
-    return `${" ".repeat(left)}${text}${" ".repeat(padding - left)}`;
-  }
   return align === "right" ? `${" ".repeat(padding)}${text}` : `${text}${" ".repeat(padding)}`;
 }
 
@@ -2170,6 +2166,10 @@ function groupSpeedReports(value) {
   return groups;
 }
 
+function joinSpeedColumns(columns) {
+  return columns.slice(0, 4).join("  ") + (columns.length > 4 ? `      ${columns[4]}` : "");
+}
+
 function renderStructuredSpeedText(value, options = {}) {
   const colored = options.colored === true;
   return groupSpeedReports(value).map((group) => {
@@ -2192,11 +2192,8 @@ function renderStructuredSpeedText(value, options = {}) {
         ansiText(padDisplay("单线程上传", 18, "right"), "1;96", colored),
         ansiText(padDisplay("单线程下载", 18, "right"), "1;96", colored),
       ];
-      if (hasNodes) {
-        const nodeWidth = Math.max(displayWidth("节点"), ...nodes.map((node) => displayWidth(node)));
-        headings.push(ansiText(padDisplay("节点", nodeWidth, "center"), "1;96", colored));
-      }
-      lines.push(headings.join("  "));
+      if (hasNodes) headings.push(ansiText("节点", "1;96", colored));
+      lines.push(joinSpeedColumns(headings));
       for (const [index, result] of rows.entries()) {
         const { carrier, latency, uploadMbps, downloadMbps, uploadValue, downloadValue } = speedRowValues(result, targetMbps);
         const columns = [
@@ -2206,7 +2203,7 @@ function renderStructuredSpeedText(value, options = {}) {
           ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps), colored),
         ];
         if (hasNodes) columns.push(ansiText(nodes[index], "90", colored));
-        lines.push(columns.join("  "));
+        lines.push(joinSpeedColumns(columns));
       }
       if (rows.some((result) => ["节点繁忙", "同一来源已有测速任务"].includes(result.error))) {
         lines.push(ansiText("  部分项目因节点繁忙或同一来源已有任务而跳过（-）。", "33", colored));
@@ -2867,8 +2864,7 @@ export function renderReport(report, options = {}) {
       .mobile-speed-table thead th { border-bottom:1px solid var(--line); color:#95e6ff; font-weight:600; }
       .mobile-speed-table th:first-child { text-align:left; }
       .mobile-speed-table tbody th { color:#70a598; font-weight:400; }
-      .mobile-speed-table .node-column { padding-left:16px; text-align:left; }
-      .mobile-speed-table thead .node-column { text-align:center; }
+      .mobile-speed-table .node-column { padding-left:48px; text-align:left; }
       .mobile-speed-table td.node-column { color:#99a9bd; font-size:11px; }
       .mobile-speed-table small { display:block; font-size:10px; font-weight:400; }
       .mobile-busy-note { color:var(--warn); font-size:12px; margin:8px 0; }
