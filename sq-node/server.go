@@ -241,25 +241,31 @@ func (node *nodeServer) activate(response http.ResponseWriter, request *http.Req
 		reject(http.StatusConflict, "token_replayed", "activation token was already used", "task_id", taskID)
 		return
 	}
-	active, publicActive := 0, 0
+	active, publicActive, reservedMbps := 0, 0, 0
 	for _, item := range node.state.activations {
 		if item.Released || item.ExpiresAt <= now.Unix() {
 			continue
 		}
 		active++
+		reservedMbps += item.TargetMbps
 		if item.Scope == "public" {
 			publicActive++
 		}
 	}
-	if active >= config.MaxConcurrency || (claims.Scope == "public" &&
-		publicActive >= config.MaxConcurrency-config.ReserveConcurrency) {
+	capacityFull := reservedMbps+claims.TargetMbps > config.CapacityMbps
+	if config.CapacityMbps == 0 {
+		capacityFull = active >= config.MaxConcurrency || (claims.Scope == "public" &&
+			publicActive >= config.MaxConcurrency-config.ReserveConcurrency)
+	}
+	if capacityFull {
 		node.state.mu.Unlock()
 		response.Header().Set("Retry-After", "30")
 		reject(http.StatusTooManyRequests, "capacity_full", "node capacity is full",
 			"task_id", taskID,
 			"active", active,
 			"public_active", publicActive,
-			"max_concurrency", config.MaxConcurrency,
+			"capacity_mbps", config.CapacityMbps,
+			"reserved_mbps", reservedMbps,
 		)
 		return
 	}
@@ -297,6 +303,7 @@ func (node *nodeServer) activate(response http.ResponseWriter, request *http.Req
 	node.state.persistent.UsedJWTIDs[claims.JWTID] = claims.ExpiresAt
 	node.state.persistent.TotalReservedBytes += reservedBytes
 	node.state.persistent.ActiveReservations++
+	node.state.persistent.ReservedMbps += claims.TargetMbps
 	if claims.Scope == "public" {
 		node.state.persistent.PublicReservedBytes += reservedBytes
 		node.state.persistent.PublicReservations++
@@ -306,6 +313,7 @@ func (node *nodeServer) activate(response http.ResponseWriter, request *http.Req
 		delete(node.state.persistent.UsedJWTIDs, claims.JWTID)
 		node.state.persistent.TotalReservedBytes -= reservedBytes
 		node.state.persistent.ActiveReservations--
+		node.state.persistent.ReservedMbps -= claims.TargetMbps
 		if claims.Scope == "public" {
 			node.state.persistent.PublicReservedBytes -= reservedBytes
 			node.state.persistent.PublicReservations--
@@ -343,15 +351,12 @@ func (node *nodeServer) beginTransfer(request *http.Request, direction string) (
 		!sameIP(item.SourceIP, requestIP(request)) {
 		return nil, 0, errors.New("invalid key")
 	}
+	if item.DownloadActive || item.UploadActive {
+		return nil, 0, errors.New("a transfer is already active")
+	}
 	if direction == "download" {
-		if item.DownloadActive {
-			return nil, 0, errors.New("download already active")
-		}
 		item.DownloadActive = true
 		return item, item.DownloadBytes, nil
-	}
-	if item.UploadActive {
-		return nil, 0, errors.New("upload already active")
 	}
 	item.UploadActive = true
 	return item, item.UploadBytes, nil
@@ -573,7 +578,7 @@ func listenForConfig(config Config) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("无法监听 %s: %w", endpoint, err)
 	}
-	limited := limitConnections(listener, maximum(32, config.MaxConcurrency*12))
+	limited := limitConnections(listener, maximum(32, config.transportTaskCapacity()*12))
 	if internalOnly {
 		return &trustedProxyListener{Listener: limited, apiToken: config.APIToken}, nil
 	}

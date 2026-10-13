@@ -53,6 +53,7 @@ type Config struct {
 	Carrier               string    `json:"carrier"`
 	Label                 string    `json:"label,omitempty"`
 	MaxMbps               int       `json:"max_mbps"`
+	CapacityMbps          int       `json:"capacity_mbps,omitempty"`
 	MaxConcurrency        int       `json:"max_concurrency"`
 	ReserveConcurrency    int       `json:"reserve_concurrency"`
 	DailyPublicBytes      int64     `json:"daily_public_bytes"`
@@ -80,7 +81,8 @@ func defaultConfig() Config {
 		Version:            configVersion,
 		ListenAddress:      "::",
 		MaxMbps:            200,
-		MaxConcurrency:     5,
+		CapacityMbps:       1000,
+		MaxConcurrency:     0,
 		ReserveConcurrency: 0,
 		DailyPublicBytes:   10_000_000_000,
 		DailyTotalBytes:    100_000_000_000,
@@ -212,10 +214,13 @@ func (config Config) validate(requireRegistration bool) error {
 	if config.MaxMbps != 100 && config.MaxMbps != 200 && config.MaxMbps != 400 {
 		return errors.New("最高档位只支持 100、200 或 400 Mbps")
 	}
-	if config.MaxConcurrency < 1 || config.MaxConcurrency > 20 {
+	if config.CapacityMbps != 0 && (config.CapacityMbps < 100 || config.CapacityMbps > 10000 || config.CapacityMbps < config.MaxMbps) {
+		return errors.New("用于SQ的总带宽必须在100到10000Mbps之间，且不低于单任务最高档位")
+	}
+	if config.CapacityMbps == 0 && (config.MaxConcurrency < 1 || config.MaxConcurrency > 20) {
 		return errors.New("最大并发必须在 1 到 20 之间")
 	}
-	if config.ReserveConcurrency < 0 || config.ReserveConcurrency >= config.MaxConcurrency {
+	if config.CapacityMbps == 0 && (config.ReserveConcurrency < 0 || config.ReserveConcurrency >= config.MaxConcurrency) {
 		return errors.New("保留并发必须小于最大并发")
 	}
 	if config.DailyPublicBytes < 0 || config.DailyPublicBytes > 10_000_000_000_000 {
@@ -390,4 +395,26 @@ var regionNames = map[string]string{
 	"hi": "海南", "cq": "重庆", "sc": "四川", "gz": "贵州", "yn": "云南",
 	"xz": "西藏", "sn": "陕西", "gs": "甘肃", "qh": "青海", "nx": "宁夏",
 	"xj": "新疆", "tw": "台湾", "hk": "香港", "mo": "澳门",
+}
+
+// This sizes HTTP/gateway protection, not admission. A 100 Mbps minimum tier
+// already bounds the number of admitted tasks for bandwidth-based nodes.
+func (config Config) transportTaskCapacity() int {
+	// Use the supported maximum so an online budget increase does not leave
+	// listeners or existing gateway processes at their startup task count.
+	return 10000 / 100
+}
+
+func (config Config) suggestedCapacityMbps() int {
+	if config.CapacityMbps > 0 {
+		return config.CapacityMbps
+	}
+	return config.MaxMbps * config.MaxConcurrency
+}
+
+func (config Config) capacityDescription(reserved int) string {
+	if config.CapacityMbps > 0 {
+		return fmt.Sprintf("已预约%d / %dMbps", reserved, config.CapacityMbps)
+	}
+	return fmt.Sprintf("旧模式：最多%d个任务（自用保留%d）；执行sq-node limit bandwidth <总带宽Mbps> 后切换", config.MaxConcurrency, config.ReserveConcurrency)
 }

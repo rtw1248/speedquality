@@ -63,7 +63,7 @@ bash <(curl -fsSL https://github.com/rtw1248/speedquality/raw/refs/heads/main/ru
 
 ## 自建测速节点
 
-安装`sq-node`后，可公开共享或仅允许持有Route Key的用户使用，并设置带宽、并发和流量额度。
+安装`sq-node`后，可公开共享或仅允许持有Route Key的用户使用，并设置总带宽、单任务最高档位和流量额度。
 
 ```bash
 bash <(curl -fsSL https://sq.yolo2.cc/install-node)

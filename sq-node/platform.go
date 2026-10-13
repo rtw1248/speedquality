@@ -27,6 +27,7 @@ type registrationRequest struct {
 	IPv6               string   `json:"ipv6,omitempty"`
 	Port               int      `json:"port"`
 	MaxMbps            int      `json:"max_mbps"`
+	CapacityMbps       int      `json:"capacity_mbps,omitempty"`
 	MaxConcurrency     int      `json:"max_concurrency"`
 	ReserveConcurrency int      `json:"reserve_concurrency"`
 	DailyPublicBytes   int64    `json:"daily_public_bytes"`
@@ -82,6 +83,7 @@ type registrationResponse struct {
 type heartbeatRequest struct {
 	AccessMode         string   `json:"access_mode"`
 	MaxMbps            int      `json:"max_mbps"`
+	CapacityMbps       int      `json:"capacity_mbps,omitempty"`
 	MaxConcurrency     int      `json:"max_concurrency"`
 	ReserveConcurrency int      `json:"reserve_concurrency"`
 	DailyPublicBytes   int64    `json:"daily_public_bytes"`
@@ -91,6 +93,7 @@ type heartbeatRequest struct {
 	TotalBytesToday    int64    `json:"total_bytes_today"`
 	TotalReserved      int64    `json:"total_reserved_bytes"`
 	EmergencyStopped   bool     `json:"emergency_stopped"`
+	ReservedMbps       int      `json:"reserved_mbps"`
 	Active             int      `json:"active"`
 	PublicActive       int      `json:"public_active"`
 	Availability       string   `json:"availability"`
@@ -251,13 +254,13 @@ func registerWithPlatform(path string) (Config, error) {
 	payload := registrationRequest{
 		Version: 1, Challenge: config.OwnershipChallenge, Region: config.Region,
 		Carrier: config.Carrier, Label: config.Label, IPv4: config.PublicIPv4,
-		IPv6: config.PublicIPv6, Port: config.Port, MaxMbps: config.MaxMbps,
+		IPv6: config.PublicIPv6, Port: config.Port, MaxMbps: config.MaxMbps, CapacityMbps: config.CapacityMbps,
 		MaxConcurrency: config.MaxConcurrency, ReserveConcurrency: config.ReserveConcurrency,
 		DailyPublicBytes: config.DailyPublicBytes, DailyTotalBytes: config.DailyTotalBytes,
 		AccessMode:   config.AccessMode,
 		Availability: config.Availability, Timezone: config.Timezone,
 		Available: availableAt(config, time.Now()), AgentVersion: version,
-		ProtocolVersion: nodeProtocolVersion, Capabilities: append([]string(nil), nodeCapabilities...),
+		ProtocolVersion: nodeProtocolVersion, Capabilities: config.protocolCapabilities(),
 		FirewallReady: currentGateStatus(path, time.Now()).Ready,
 		Authorized:    true,
 	}
@@ -346,15 +349,15 @@ func sendHeartbeat(ctx context.Context, path string, state *runtimeState) error 
 func buildHeartbeatPayload(path string, config Config, state *runtimeState, now time.Time) heartbeatRequest {
 	active, publicActive, publicBytes, publicReserved, totalBytes, totalReserved, emergencyStopped := state.snapshot(now)
 	return heartbeatRequest{
-		AccessMode: config.AccessMode, MaxMbps: config.MaxMbps,
+		AccessMode: config.AccessMode, MaxMbps: config.MaxMbps, CapacityMbps: config.CapacityMbps,
 		MaxConcurrency: config.MaxConcurrency, ReserveConcurrency: config.ReserveConcurrency,
 		DailyPublicBytes: config.DailyPublicBytes, PublicBytesToday: publicBytes,
-		PublicReserved: publicReserved, Active: active, PublicActive: publicActive,
+		PublicReserved: publicReserved, Active: active, PublicActive: publicActive, ReservedMbps: state.reservedBandwidth(),
 		DailyTotalBytes: config.DailyTotalBytes, TotalBytesToday: totalBytes,
 		TotalReserved: totalReserved, EmergencyStopped: emergencyStopped,
 		Availability: config.Availability, Timezone: config.Timezone,
 		Available: availableAt(config, now), AgentVersion: version,
-		ProtocolVersion: nodeProtocolVersion, Capabilities: append([]string(nil), nodeCapabilities...),
+		ProtocolVersion: nodeProtocolVersion, Capabilities: config.protocolCapabilities(),
 		FirewallReady: currentGateStatus(path, now).Ready,
 	}
 }
@@ -519,4 +522,12 @@ func localNodeResponds(config Config) bool {
 		}
 	}
 	return false
+}
+
+func (config Config) protocolCapabilities() []string {
+	capabilities := append([]string(nil), nodeCapabilities...)
+	if config.CapacityMbps > 0 {
+		capabilities = append(capabilities, "capacity.bandwidth.v1")
+	}
+	return capabilities
 }

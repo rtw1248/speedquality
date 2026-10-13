@@ -137,8 +137,7 @@ Content-Type: application/json
   "ipv6": "",
   "port": 51234,
   "max_mbps": 200,
-  "max_concurrency": 5,
-  "reserve_concurrency": 0,
+  "capacity_mbps": 1000,
   "daily_public_bytes": 10000000000,
   "daily_total_bytes": 100000000000,
   "access_mode": "public",
@@ -147,7 +146,7 @@ Content-Type: application/json
   "available": true,
   "agent_version": "v1.0.0",
   "protocol_version": 1,
-  "capabilities": ["speed.http.v1"],
+  "capabilities": ["speed.http.v1", "capacity.bandwidth.v1"],
   "firewall_ready": false,
   "authorized": true
 }
@@ -194,8 +193,7 @@ Content-Type: application/json
 {
   "access_mode": "public",
   "max_mbps": 100,
-  "max_concurrency": 1,
-  "reserve_concurrency": 0,
+  "capacity_mbps": 1000,
   "daily_public_bytes": 10000000000,
   "daily_total_bytes": 20000000000,
   "public_bytes_today": 123456789,
@@ -210,7 +208,7 @@ Content-Type: application/json
   "available": true,
   "agent_version": "v1.0.0",
   "protocol_version": 1,
-  "capabilities": ["speed.http.v1"],
+  "capabilities": ["speed.http.v1", "capacity.bandwidth.v1"],
   "firewall_ready": true
 }
 ```
@@ -418,3 +416,13 @@ last_checked_at, public_testing`。`status`为`verified`或`pending`，近期成
 
 `edu`仅允许来自Route Key解析并绑定具体节点的会话。普通公共任务、静态节点和第三方教育网调度
 继续关闭，不能仅靠提交`carrier: edu`开启。
+
+## 节点带宽预算与旧协议兼容
+
+声明`capacity.bandwidth.v1`的自建节点通过注册和心跳提交`capacity_mbps`（100到10000Mbps）。
+该值不能低于`max_mbps`，后者仍表示单任务最高档位。平台响应回传接受的`capacity_mbps`。
+调度和节点激活分别原子限制有效任务的档位总和，双栈、公共与自用共享预算。
+新模式不使用`max_concurrency`和`reserve_concurrency`作为准入条件；这些字段仅保留给没有
+`capacity_mbps`的旧节点。不能通过升级平台自动改变旧节点策略。
+心跳中的`active`、`public_active`、`reserved_mbps`用于运行观察；平台以自己的有效租约预约量
+分配容量，节点以本地有效激活量检查容量。完成、取消或到期后释放，重复操作不得重复占用或扣减。

@@ -78,7 +78,7 @@ Content-Encoding: identity
 
 ### `POST /release?key={key}`
 
-立即让 key 失效并释放并发名额。该接口应具有幂等性：同一个 key 重复释放也返回 `2xx`。
+立即让 key 失效并释放预约容量。该接口应具有幂等性：同一个 key 重复释放也返回 `2xx`。
 
 下载、上传和释放遇到无效或过期 key 时返回 `401` 或 `403`。所有接口都不应跳转到其他主机。
 
@@ -108,9 +108,11 @@ GET /.well-known/speedquality/ownership
 | `duration_seconds` | 当前固定为 `5` |
 | `iat`、`nbf`、`exp` | 签发、生效和过期时间，最长 15 分钟 |
 
-节点必须先验证 JWT 签名和所有约束，再生成普通短期 key。`public` 任务受公共并发和每日公共
-流量限制；`owner` 任务可使用提供者保留并发，但仍受节点总并发、每日总流量、JWT 速度和字节
-上限约束。
+节点必须先验证JWT签名和所有约束，再生成普通短期key。声明`capacity.bandwidth.v1`并上报
+`capacity_mbps`的节点，在激活时原子检查有效任务的`target_mbps`总和加本次档位不超过预算。
+IPv4/IPv6、`public`和`owner`共享预算；同一激活一次只允许一个上传或下载请求。
+`public`受每日公共流量限制，所有任务受每日总流量、单任务最高档位和JWT字节上限约束。
+旧节点未声明总带宽时，平台继续遵守其原有并发和保留位置配置。
 参考实现和部署方法见 [`sq-node.md`](sq-node.md)。
 
 社区模式不会把固定内部端口直接交给测速用户。Core 先下发来源 IP、随机外部端口和 TTL，节点
@@ -184,8 +186,8 @@ GET /.well-known/speedquality/ownership
 可以省略，默认 `http`；`max_mbps` 只能是 `100`、`200` 或 `400`。当用户选择的测速档位高于
 节点的 `max_mbps` 时，开源项目不会分配该节点。
 
-最大并发由节点服务自己的 `/activate` 实现控制，不写入 `STATIC_NODES`。静态模式不在平台侧
-重复预留容量，适合个人自用；公开给多人使用时必须保证节点的激活接口能原子限制并发。
+节点容量由服务自己的`/activate`原子控制，不写入 `STATIC_NODES`。静态模式不在平台侧
+重复预留容量，适合个人自用；公开给多人使用时必须保证节点的激活接口能原子限制预约带宽。
 
 示例 IP 是文档保留地址，不能直接用于部署。`STATIC_NODES` 的具体保存位置和公开项目部署
 步骤见 [`../deploy/cloudflare-worker/README.md`](../deploy/cloudflare-worker/README.md)。
@@ -218,7 +220,7 @@ curl -fsS -X POST "$SQ_NODE_ORIGIN/release?key=$SQ_NODE_KEY"
 - 错误 key 无法下载或上传。
 - 释放后的 key 立即失效。
 - 多次释放不会报服务器内部错误。
-- 达到最大并发后，新的激活请求返回 `429` 或 `503`。
+- 预约带宽达到总预算后，新的激活请求返回 `429` 或 `503`。
 - 连续运行时内存、临时文件和连接数不会持续增长。
 
 以上项目通过后，把配置加入 SpeedQuality 即可进行完整 Bash 测速。要加入平台调度，不应把

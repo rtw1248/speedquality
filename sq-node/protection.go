@@ -24,12 +24,12 @@ type requestProtector struct {
 }
 
 func newRequestProtector(config Config) *requestProtector {
-	allLimit := maximum(32, config.MaxConcurrency*12)
+	allLimit := maximum(32, config.transportTaskCapacity()*12)
 	return &requestProtector{
 		buckets:    make(map[string]requestBucket),
 		all:        make(chan struct{}, allLimit),
-		activation: make(chan struct{}, maximum(4, config.MaxConcurrency*2)),
-		transfer:   make(chan struct{}, maximum(4, config.MaxConcurrency*3)),
+		activation: make(chan struct{}, maximum(4, config.transportTaskCapacity()*2)),
+		transfer:   make(chan struct{}, maximum(4, config.transportTaskCapacity()*3)),
 		other:      make(chan struct{}, 16),
 	}
 }

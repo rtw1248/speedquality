@@ -569,7 +569,7 @@ func runGate(ctx context.Context, path string, output io.Writer) error {
 				continue
 			}
 			gate, openErr := openLeaseGate(
-				command, firewall, maximum(4, config.MaxConcurrency*3), config.APIToken,
+				command, firewall, maximum(4, config.transportTaskCapacity()*3), config.APIToken,
 			)
 			if openErr != nil {
 				nodeLog(ctx, slog.LevelError, "gate.lease_open_failed",

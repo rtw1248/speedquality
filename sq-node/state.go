@@ -12,6 +12,7 @@ import (
 )
 
 type persistentState struct {
+	ReservedMbps        int              `json:"reserved_mbps"`
 	Day                 string           `json:"day"`
 	PublicBytes         int64            `json:"public_bytes"`
 	PublicReservedBytes int64            `json:"public_reserved_bytes"`
@@ -95,6 +96,7 @@ func loadRuntimeState(path string, now time.Time) (*runtimeState, error) {
 	}
 	state.persistent.ActiveReservations = 0
 	state.persistent.PublicReservations = 0
+	state.persistent.ReservedMbps = 0
 	if err := state.saveLocked(); err != nil {
 		return nil, err
 	}
@@ -217,6 +219,10 @@ func (state *runtimeState) finishActivationLocked(active *activation) {
 		return
 	}
 	active.Released = true
+	state.persistent.ReservedMbps -= active.TargetMbps
+	if state.persistent.ReservedMbps < 0 {
+		state.persistent.ReservedMbps = 0
+	}
 	state.persistent.TotalReservedBytes -= active.ReservedBytes
 	if state.persistent.TotalReservedBytes < 0 {
 		state.persistent.TotalReservedBytes = 0
@@ -270,4 +276,10 @@ func (state *runtimeState) setEmergencyStopped(stopped bool) error {
 
 func (state *runtimeState) persistenceSnapshot() (savedAt int64, durationMS int64, ok bool) {
 	return state.lastSaveAt.Load(), state.lastSaveMS.Load(), state.lastSaveOK.Load()
+}
+
+func (state *runtimeState) reservedBandwidth() int {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.persistent.ReservedMbps
 }

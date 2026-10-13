@@ -1155,8 +1155,8 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.3.7'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.3.7'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.4.0'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.4.0'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1

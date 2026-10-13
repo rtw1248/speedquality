@@ -3,7 +3,7 @@
 `sq-node` 是 SpeedQuality 社区节点服务。它在节点服务器上直接提供上传和下载字节流，实际
 测速流量由用户服务器直连该节点，不经过 Cloudflare Worker 或私有 Core。
 
-当前版本已实现短期 JWT、来源 IP 绑定、并发和总流量硬限制、低权限 systemd 服务、SSH
+当前版本已实现短期 JWT、来源 IP 绑定、带宽预算和总流量硬限制、低权限 systemd 服务、SSH
 安全预检、一次性 nftables 租约、Route Key 轮换、签名更新和紧急隔离。真实发行版、云安全组、
 IPv4/IPv6 nftables 和公网并发尚需在私有 Alpha 验收。完成这些部署验收前，只应使用自有节点。
 完整安全边界见
@@ -85,21 +85,35 @@ bash <(curl -fsSL https://sq.yolo2.cc/install-node)
 | 公网 IP | 自动 | 分别经 IPv4 和 IPv6 请求平台，以实际连通结果为准 |
 | 内部 TCP 端口 | 自动 | 从 `50000-59999` 选择空闲端口；日常只监听回环地址 |
 | 最高档位 | 默认值 | 本地上限 `200 Mbps`；公共调度初始认证 `100 Mbps`，升档需平台验证 |
-| 最大/保留并发 | 默认值 | 默认总并发 `5`、保留并发 `0`；保留并发可在日常管理中设置 |
+| 用于SQ的总带宽 | 默认值 | 默认`1000Mbps`，填写愿意分给SQ的带宽；所有档位、双栈、公共和自用任务共享 |
 | 每日公共流量 | 默认值 | 默认 `10GB` |
 | 每日总流量 | 默认值 | 默认 `100GB`，同时覆盖公共任务和 Route Key 任务 |
 | 访问模式 | 有默认值 | 默认 `public`，可随时改成 `private` 或 `paused` |
 | 可用时间 | 默认值 | 默认 `always`，可以设置每日时间段和时区 |
 | 自动更新 | 默认值 | 默认 `automatic/stable`，只安装签名更新 |
 
-按 `E` 修改时只询问端口、最高档位、最大并发、每日总流量、访问模式和更新方式。端口带随机
-默认值，修改时检查范围和占用；访问与更新方式使用中文编号选项。提供者保留并发、公共额度、
-可用时间和时区保留默认值，可按需通过 `limit reserve`、`limit daily`、`schedule` 管理命令调整。
-这些新默认值只用于新安装；已有配置会保留原来的速度、并发和额度。
+按`E`修改时询问端口、单任务最高档位、用于SQ的总带宽、每日总流量、访问模式和更新方式。
+端口会检查范围和占用；访问与更新方式使用中文编号选项。公共流量、可用时间和时区可以通过
+`limit daily`、`schedule`调整。
 
-`200 Mbps × 5` 个任务同向传输时最高约需 `1 Gbps`，这是允许的上限，不代表程序已经测出
-节点具备这份带宽。较小带宽的节点应在 `E` 中降低档位或并发。总额度包含公共和自用任务，
-当前公共额度为 `10GB`，不是默认把 `100GB` 都交给公共调度；按 30 天计算，总额度最高可达约 `3TB`。
+总带宽是提供者愿意分给SQ的预算，不代表已测出的节点真实容量。例如设置1000Mbps，单任务最高
+400Mbps，可以同时容纳10个100Mbps、5个200Mbps，或2个400Mbps加1个200Mbps任务。
+任务按选择的档位预约，测速慢时也不会缩减预约；完成、取消或到期后释放。平台和节点本地都会
+检查预算，IPv4/IPv6、公共和Route Key任务共享。单任务最高档位不能超过总带宽。
+每日总流量包含公共和自用，默认100GB；公共额度默认10GB。
+
+### 旧节点升级
+
+平台兼容旧节点。旧配置没有记录总带宽，程序升级不会自动把并发数换算后启用；原档位、并发、
+自用保留和流量额度继续有效。提供者确认愿意分给SQ的带宽后执行，例如：
+
+```bash
+sudo sq-node limit bandwidth 1000
+```
+
+也可以在管理菜单的容量设置中确认。建议值根据旧最高档位乘并发数计算，只用于参考。
+切换后，旧的自用保留位置改为Route Key优先调度，不长期预留固定位置；所有任务共享总预算。
+先升级平台和节点程序，再设置带宽；旧程序无法读取带宽模式配置。
 
 向导显示摘要后，必须在云平台安全组允许 `50000-59999/TCP`。主机上的 nftables 会让随机
 外部端口只对当前租约来源开放，并在最长 3 分钟后删除；不要再添加绕过该规则的主机级宽泛
@@ -150,7 +164,7 @@ IP、独立地理数据、ASN/组织和所有权挑战核验；平台识别为�
 ```bash
 bash <(curl -fsSL https://sq.yolo2.cc/install-node) --install-only
 sudo sq-node setup --platform https://sq.yolo2.cc \
-  --access private --speed 100 --concurrency 1 --daily 1GB --total 2GB
+  --access private --speed 100 --bandwidth 100 --daily 1GB --total 2GB
 ```
 
 向导显示自动检测结果后，核对地区、运营商和公网地址，在云安全组允许 `50000-59999/TCP`，
@@ -217,8 +231,7 @@ sudo sq-node init \
   --carrier ct \
   --ipv4 YOUR_PUBLIC_IPV4 \
   --speed 200 \
-  --concurrency 5 \
-  --reserve 0 \
+  --bandwidth 1000 \
   --daily 10GB \
   --total 100GB \
   --availability always \
@@ -268,16 +281,13 @@ bash <(curl -fsSL https://sq.yolo2.cc/run) \
 | `private` | 不参加公共调度，只允许 Route Key 精确访问 |
 | `paused` | 拒绝所有新的测速任务 |
 | `speed` | 节点允许的最高档位：`100/200/400` Mbps |
-| `concurrency` | 节点所有任务合计的最大并发 |
-| `reserve` | 从总并发中为 Route Key 任务保留的数量 |
+| `bandwidth` | 用于SQ的总带宽，100到10000Mbps，不能低于最高档位 |
 | `daily` | 每个 UTC 自然日允许公共任务使用的流量；`0` 表示关闭公共额度 |
 | `total` | 每个 UTC 自然日所有任务合计的硬上限，必须不小于公共额度 |
 
-默认保留并发为 `0`，不长期预留空闲位置；Route Key 不计入每日公共额度，但仍受每日总额度约束。
-若精确访问时位置正被公共任务占用，平台会为该节点建立短暂的提供者优先窗口：当前位置释放后，
-新的公共任务不能立即抢占，提供者再次请求可先取得位置。例如设为总并发 3、保留并发 1 后，普通
-公共调度最多占用 2 个位置，Route Key 任务仍受总并发 3 的限制。激活时先预留最坏情况流量，
-释放时再按实际上传和下载字节结算；异常重启会保守结算未完成预留，避免重启绕过额度。
+Route Key不计入每日公共流量额度，但受每日总流量和总带宽预算约束。自用请求因容量不足等待时，
+平台会建立短暂的提供者优先窗口，避免释放的容量立即被新公共任务占用。
+激活时预留最坏情况流量，释放时按实际上传和下载字节结算；异常重启会保守结算未完成流量预留。
 
 新节点注册后处于 `observing`。临时网关就绪后 Route Key 可使用；平台连续收到默认三次认证
 心跳后切换为 `active`，同时满足新鲜心跳、`firewall_ready=true` 和其它容量条件时才加入公共
@@ -291,8 +301,7 @@ sudo sq-node access public
 sudo sq-node access private
 sudo sq-node access paused
 sudo sq-node limit speed 200
-sudo sq-node limit concurrency 3
-sudo sq-node limit reserve 1
+sudo sq-node limit bandwidth 1000
 sudo sq-node limit daily 50GB
 sudo sq-node limit total 100GB
 sudo sq-node schedule 08:00-23:00 Asia/Shanghai

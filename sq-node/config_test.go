@@ -50,6 +50,8 @@ func TestConfigValidationAndByteLimits(t *testing.T) {
 		}
 	}
 	invalid := config
+	invalid.CapacityMbps = 0
+	invalid.MaxConcurrency = 2
 	invalid.ReserveConcurrency = invalid.MaxConcurrency
 	if err := invalid.validate(false); err == nil {
 		t.Fatal("reserve concurrency equal to total was accepted")

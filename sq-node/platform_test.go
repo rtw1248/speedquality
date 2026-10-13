@@ -188,7 +188,7 @@ func TestSetupAutoDetectionSuppliesIdentityAndSafeDefaults(t *testing.T) {
 	}
 	if config.PublicIPv4 != "8.8.8.8" || config.PublicIPv6 != "2001:4860:4860::8888" ||
 		config.Region != "hb" || config.Carrier != "ct" || config.MaxMbps != 200 ||
-		config.MaxConcurrency != 5 || config.DailyPublicBytes != 10_000_000_000 ||
+		config.CapacityMbps != 1000 || config.MaxConcurrency != 0 || config.DailyPublicBytes != 10_000_000_000 ||
 		config.DailyTotalBytes != 100_000_000_000 {
 		t.Fatalf("auto config=%+v", config)
 	}
@@ -258,7 +258,7 @@ func TestSetupOptionsPreserveIdentityAndHiddenLimitsAndRejectBusyPort(t *testing
 	portAvailable = func(port int) bool { return port == 51235 }
 	t.Cleanup(func() { portAvailable = previous })
 	var output bytes.Buffer
-	input := bufio.NewReader(strings.NewReader("51235\n200\n5\n100GB\n2\n2\n"))
+	input := bufio.NewReader(strings.NewReader("51235\n200\n1000\n100GB\n2\n2\n"))
 	if err := configureSetupInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,8 @@ func TestSetupOptionsPreserveIdentityAndHiddenLimitsAndRejectBusyPort(t *testing
 		t.Fatal(err)
 	}
 	want := config
-	want.Port, want.MaxMbps, want.MaxConcurrency, want.DailyTotalBytes = 51235, 200, 5, 100_000_000_000
+	want.Port, want.MaxMbps, want.CapacityMbps, want.DailyTotalBytes = 51235, 200, 1000, 100_000_000_000
+	want.MaxConcurrency, want.ReserveConcurrency = 0, 0
 	want.AccessMode, want.UpdateMode = "private", "manual"
 	if updated != want {
 		t.Fatalf("unexpected changes to existing configuration: got %+v want %+v", updated, want)

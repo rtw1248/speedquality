@@ -38,6 +38,7 @@ func testConfig(t *testing.T) (string, Config, *ecdsa.PrivateKey) {
 	config.Region = "hb"
 	config.Carrier = "ct"
 	config.MaxMbps = 200
+	config.CapacityMbps = 0 // Keep this fixture on the supported legacy policy.
 	config.MaxConcurrency = 2
 	config.ReserveConcurrency = 1
 	config.DailyPublicBytes = 2_000_000_000
@@ -291,6 +292,11 @@ func TestTransferByteCeilingsAndSingleDirection(t *testing.T) {
 	node.download(duplicate, downloadRequest)
 	if duplicate.Code != http.StatusForbidden {
 		t.Fatalf("parallel download status=%d", duplicate.Code)
+	}
+	opposite := httptest.NewRecorder()
+	node.upload(opposite, uploadRequest)
+	if opposite.Code != http.StatusForbidden {
+		t.Fatalf("simultaneous upload/download status=%d", opposite.Code)
 	}
 }
 

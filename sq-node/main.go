@@ -149,8 +149,7 @@ func printUsage(output io.Writer) {
   sq-node limit daily 20GB        设置每日公共流量
   sq-node limit total 100GB       设置包含自用任务的每日总流量
   sq-node limit speed 200         设置最高测速档位
-  sq-node limit concurrency 5     设置总并发
-  sq-node limit reserve 1         设置提供者保留并发
+  sq-node limit bandwidth 1000    设置用于SQ的总带宽（Mbps），确认切换带宽调度
   sq-node schedule always         全天提供服务
   sq-node schedule 08:00-23:00     设置每日可用时间
   sq-node update --check          检查稳定通道更新
@@ -208,9 +207,10 @@ func initCommandModeNamed(
 	ipv4 := flags.String("ipv4", config.PublicIPv4, "公网 IPv4")
 	ipv6 := flags.String("ipv6", config.PublicIPv6, "公网 IPv6")
 	port := flags.Int("port", config.Port, "监听端口，默认从 50000-59999 随机选择")
-	speed := flags.Int("speed", config.MaxMbps, "最高档位 100/200/400 Mbps")
-	concurrency := flags.Int("concurrency", config.MaxConcurrency, "最大并发")
-	reserve := flags.Int("reserve", config.ReserveConcurrency, "提供者保留并发")
+	speed := flags.Int("speed", config.MaxMbps, "单任务最高档位 100/200/400 Mbps")
+	bandwidth := flags.Int("bandwidth", config.CapacityMbps, "用于SQ的总带宽（100-10000 Mbps）；显式设置后切换带宽调度")
+	concurrency := flags.Int("concurrency", config.MaxConcurrency, "旧配置兼容参数；新节点使用 --bandwidth")
+	reserve := flags.Int("reserve", config.ReserveConcurrency, "旧配置兼容参数；新节点使用带宽调度")
 	daily := flags.String("daily", formatByteLimit(config.DailyPublicBytes), "每日公共流量，例如 20GB")
 	total := flags.String("total", formatByteLimit(config.DailyTotalBytes), "每日总流量，例如 100GB")
 	access := flags.String("access", config.AccessMode, "public=公开共享、private=仅 Route Key、paused=暂停")
@@ -257,8 +257,24 @@ func initCommandModeNamed(
 	config.PublicIPv6 = strings.TrimSpace(*ipv6)
 	config.Port = *port
 	config.MaxMbps = *speed
+	config.CapacityMbps = *bandwidth
 	config.MaxConcurrency = *concurrency
 	config.ReserveConcurrency = *reserve
+	legacyFlag := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "concurrency" || f.Name == "reserve" {
+			legacyFlag = true
+		}
+	})
+	if config.CapacityMbps > 0 {
+		if legacyFlag {
+			return errors.New("带宽模式使用 --bandwidth 和 --speed 配置容量，无需并发数参数")
+		}
+		if existing.CapacityMbps == 0 && existing.MaxConcurrency > 0 {
+			explainCapacityMigration(output, existing)
+		}
+		config.MaxConcurrency, config.ReserveConcurrency = 0, 0
+	}
 	config.DailyPublicBytes = dailyBytes
 	config.DailyTotalBytes = totalBytes
 	config.AccessMode = strings.ToLower(*access)
@@ -611,7 +627,7 @@ IPv6：         %s
 临时租约端口：  50000-59999/TCP（云安全组允许，主机按来源临时放行）
 访问模式：     %s
 最高档位：     %d Mbps
-最大并发：     %d
+带宽预算：     %s
 每日公共额度： %s
 每日总额度：   %s
 更新方式：     %s
@@ -622,7 +638,7 @@ IPv6：         %s
 
 `, registrationStatus, emptyDash(config.PublicIPv4), emptyDash(config.PublicIPv6), regionNames[config.Region], config.Region,
 		carrierNames[config.Carrier], config.Carrier, config.Port, accessModeDescription(config.AccessMode, config.Carrier), config.MaxMbps,
-		config.MaxConcurrency, formatByteLimit(config.DailyPublicBytes), formatByteLimit(config.DailyTotalBytes),
+		config.capacityDescription(0), formatByteLimit(config.DailyPublicBytes), formatByteLimit(config.DailyTotalBytes),
 		updateModeDescription(config), config.Availability, config.Timezone)
 }
 
@@ -867,13 +883,13 @@ func statusCommand(path string, output io.Writer) error {
 		gateState += "（" + safeLogText(gate.LastError) + "）"
 	}
 	fmt.Fprintf(output,
-		"配置: %s\n注册: %s\nNode ID: %s\nRoute Key: %s\n地区/运营商: %s / %s\n公网地址: %s %s\n内部端口: %d\n临时租约网关: %s（活动租约 %d）\n访问模式: %s\n紧急隔离: %t\n平台准入: %s（认证 %d Mbps）\n当前可用: %t\n可用时间: %s (%s)\n最高档位: %d Mbps\n并发: %d（保留 %d）\n每日公共额度: %s\n每日总额度: %s\n今日公共流量: %s（另预留 %s）\n今日总流量: %s（另预留 %s）\n自动更新: %s/%s\n当前任务: %d（公共 %d）\n",
+		"配置: %s\n注册: %s\nNode ID: %s\nRoute Key: %s\n地区/运营商: %s / %s\n公网地址: %s %s\n内部端口: %d\n临时租约网关: %s（活动租约 %d）\n访问模式: %s\n紧急隔离: %t\n平台准入: %s（认证 %d Mbps）\n当前可用: %t\n可用时间: %s (%s)\n单任务最高档位: %d Mbps\n带宽预算: %s\n每日公共额度: %s\n每日总额度: %s\n今日公共流量: %s（另预留 %s）\n今日总流量: %s（另预留 %s）\n自动更新: %s/%s\n当前任务: %d（公共 %d）\n",
 		path, registered, emptyDash(config.NodeID), emptyDash(config.RouteKey), config.Region,
 		config.Carrier, emptyDash(config.PublicIPv4), emptyDash(config.PublicIPv6), config.Port,
 		gateState, gate.ActiveLeases, config.AccessMode, emergencyStopped,
 		emptyDash(config.AdmissionStatus), config.CertifiedMbps,
 		availableAt(config, time.Now()), config.Availability, config.Timezone,
-		config.MaxMbps, config.MaxConcurrency, config.ReserveConcurrency,
+		config.MaxMbps, config.capacityDescription(state.reservedBandwidth()),
 		formatByteLimit(config.DailyPublicBytes), formatByteLimit(config.DailyTotalBytes),
 		formatByteLimit(publicBytes), formatByteLimit(publicReserved),
 		formatByteLimit(totalBytes), formatByteLimit(totalReserved),
@@ -935,7 +951,7 @@ func updateAccess(path, mode string, output io.Writer) error {
 
 func updateLimit(path string, arguments []string, output io.Writer) error {
 	if len(arguments) != 2 {
-		return errors.New("用法: sq-node limit daily|total|speed|concurrency|reserve VALUE")
+		return errors.New("用法: sq-node limit daily|total|speed|bandwidth VALUE")
 	}
 	config, err := loadConfig(path)
 	if err != nil {
@@ -948,10 +964,25 @@ func updateLimit(path string, arguments []string, output io.Writer) error {
 		config.DailyTotalBytes, err = parseByteLimit(arguments[1])
 	case "speed":
 		config.MaxMbps, err = strconv.Atoi(arguments[1])
-	case "concurrency":
-		config.MaxConcurrency, err = strconv.Atoi(arguments[1])
-	case "reserve":
-		config.ReserveConcurrency, err = strconv.Atoi(arguments[1])
+	case "bandwidth":
+		value, parseErr := strconv.Atoi(arguments[1])
+		if parseErr != nil || value < 100 || value > 10000 || value < config.MaxMbps {
+			return errors.New("总带宽必须在100到10000Mbps之间，且不低于单任务最高档位")
+		}
+		if config.CapacityMbps == 0 {
+			explainCapacityMigration(output, config)
+		}
+		config.CapacityMbps = value
+		config.MaxConcurrency, config.ReserveConcurrency = 0, 0
+	case "concurrency", "reserve":
+		if config.CapacityMbps > 0 {
+			return errors.New("带宽模式请使用 sq-node limit bandwidth 调整总带宽")
+		}
+		if arguments[0] == "concurrency" {
+			config.MaxConcurrency, err = strconv.Atoi(arguments[1])
+		} else {
+			config.ReserveConcurrency, err = strconv.Atoi(arguments[1])
+		}
 	default:
 		return errors.New("未知额度类型")
 	}
@@ -1276,11 +1307,17 @@ func promptBasicLimits(config *Config, reader *bufio.Reader, output io.Writer) e
 	if err != nil {
 		return errors.New("最高档位必须是数字")
 	}
-	concurrency, err := strconv.Atoi(prompt(
-		reader, output, "最大并发", strconv.Itoa(config.MaxConcurrency),
+	if config.CapacityMbps == 0 {
+		explainCapacityMigration(output, *config)
+	}
+	bandwidth, err := strconv.Atoi(prompt(
+		reader, output, "确认用于SQ的总带宽上限 Mbps（不是服务器总带宽）", strconv.Itoa(config.suggestedCapacityMbps()),
 	))
 	if err != nil {
-		return errors.New("最大并发必须是数字")
+		return errors.New("总带宽必须是数字")
+	}
+	if bandwidth < 100 || bandwidth > 10000 || bandwidth < speed {
+		return errors.New("总带宽必须在100到10000Mbps之间，且不低于单任务最高档位")
 	}
 	total, err := parseByteLimit(prompt(
 		reader, output, "每日总流量（公共和自用合计，例如 100GB）", formatByteLimit(config.DailyTotalBytes),
@@ -1289,7 +1326,8 @@ func promptBasicLimits(config *Config, reader *bufio.Reader, output io.Writer) e
 		return err
 	}
 	config.MaxMbps = speed
-	config.MaxConcurrency = concurrency
+	config.CapacityMbps = bandwidth
+	config.MaxConcurrency, config.ReserveConcurrency = 0, 0
 	config.DailyTotalBytes = total
 	return nil
 }
@@ -1502,4 +1540,11 @@ func emptyDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func explainCapacityMigration(output io.Writer, config Config) {
+	fmt.Fprintf(output, "旧配置：单任务最高%dMbps、最多%d个任务。以下总带宽建议值仅由旧配置换算，请按愿意分给SQ的带宽确认。\n", config.MaxMbps, config.MaxConcurrency)
+	if config.ReserveConcurrency > 0 {
+		fmt.Fprintf(output, "切换后，自用保留%d个位置将改为Route Key优先调度；不再长期预留位置，公共和自用任务共享带宽预算。\n", config.ReserveConcurrency)
+	}
 }
