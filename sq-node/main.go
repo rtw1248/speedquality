@@ -208,7 +208,7 @@ func initCommandModeNamed(
 	ipv6 := flags.String("ipv6", config.PublicIPv6, "公网 IPv6")
 	port := flags.Int("port", config.Port, "监听端口，默认从 50000-59999 随机选择")
 	speed := flags.Int("speed", config.MaxMbps, "单任务最高档位 100/200/400 Mbps")
-	bandwidth := flags.Int("bandwidth", config.CapacityMbps, "用于SQ的总带宽（100-10000 Mbps）；显式设置后切换带宽调度")
+	bandwidth := flags.Int("bandwidth", config.CapacityMbps, "用于SQ的总带宽，单位Mbps，只填整数，例如400、600、800、1000（范围100-10000，且不低于单任务最高档位）；显式设置后切换带宽调度")
 	concurrency := flags.Int("concurrency", config.MaxConcurrency, "旧配置兼容参数；新节点使用 --bandwidth")
 	reserve := flags.Int("reserve", config.ReserveConcurrency, "旧配置兼容参数；新节点使用带宽调度")
 	daily := flags.String("daily", formatByteLimit(config.DailyPublicBytes), "每日公共流量，例如 20GB")
@@ -640,6 +640,10 @@ IPv6：         %s
 		carrierNames[config.Carrier], config.Carrier, config.Port, accessModeDescription(config.AccessMode, config.Carrier), config.MaxMbps,
 		config.capacityDescription(0), formatByteLimit(config.DailyPublicBytes), formatByteLimit(config.DailyTotalBytes),
 		updateModeDescription(config), config.Availability, config.Timezone)
+	if config.CapacityMbps > 0 {
+		printBandwidthGuide(output)
+		fmt.Fprintln(output, "按 E 可修改总带宽和单任务最高档位。")
+	}
 }
 
 func accessModeDescription(mode string, carriers ...string) string {
@@ -1300,9 +1304,15 @@ func promptAccessMode(reader *bufio.Reader, output io.Writer, current string, ca
 	}
 }
 
+func printBandwidthGuide(output io.Writer) {
+	fmt.Fprintln(output, "总带宽由所有SQ测速任务共用，请填写你愿意分配给SQ的带宽。")
+	fmt.Fprintln(output, "单位Mbps，只填整数，例如400、600、800、1000；可填100～10000，且不低于单任务最高档位。")
+	fmt.Fprintln(output, "例如总带宽600Mbps、单任务最高200Mbps，可同时分配3个200Mbps任务。")
+}
+
 func promptBasicLimits(config *Config, reader *bufio.Reader, output io.Writer) error {
 	speed, err := strconv.Atoi(prompt(
-		reader, output, "最高档位 100/200/400 Mbps", strconv.Itoa(config.MaxMbps),
+		reader, output, "单任务最高档位 100/200/400 Mbps", strconv.Itoa(config.MaxMbps),
 	))
 	if err != nil {
 		return errors.New("最高档位必须是数字")
@@ -1310,11 +1320,12 @@ func promptBasicLimits(config *Config, reader *bufio.Reader, output io.Writer) e
 	if config.CapacityMbps == 0 {
 		explainCapacityMigration(output, *config)
 	}
+	printBandwidthGuide(output)
 	bandwidth, err := strconv.Atoi(prompt(
-		reader, output, "确认用于SQ的总带宽上限 Mbps（不是服务器总带宽）", strconv.Itoa(config.suggestedCapacityMbps()),
+		reader, output, "用于SQ的总带宽 Mbps", strconv.Itoa(config.suggestedCapacityMbps()),
 	))
 	if err != nil {
-		return errors.New("总带宽必须是数字")
+		return errors.New("总带宽请只填写整数（单位Mbps），例如600")
 	}
 	if bandwidth < 100 || bandwidth > 10000 || bandwidth < speed {
 		return errors.New("总带宽必须在100到10000Mbps之间，且不低于单任务最高档位")
