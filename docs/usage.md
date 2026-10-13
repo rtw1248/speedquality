@@ -24,7 +24,7 @@ curl -fsSL https://sq.yolo2.cc/run | env TERM=xterm bash
 也可以直接从 GitHub 获取脚本，适合在帖子中使用 GitHub 链接：
 
 ```bash
-bash <(curl -fsSL https://github.com/rtw1248/speedquality/raw/refs/heads/main/run.sh)
+bash <(curl -fsSL https://github.com/rtw1248/speedquality/raw/main/run.sh)
 ```
 
 两种入口的参数相同，均连接 SpeedQuality 平台获取测速节点、下载测速程序并生成报告。

@@ -46,7 +46,7 @@ bash <(curl -fsSL https://sq.yolo2.cc/run) --nq https://nodequality.com/r/REPORT
 <summary>使用GitHub地址运行</summary>
 
 ```bash
-bash <(curl -fsSL https://github.com/rtw1248/speedquality/raw/refs/heads/main/run.sh)
+bash <(curl -fsSL https://github.com/rtw1248/speedquality/raw/main/run.sh)
 ```
 
 参数相同；仍通过SpeedQuality平台获取节点、下载程序和生成报告。
