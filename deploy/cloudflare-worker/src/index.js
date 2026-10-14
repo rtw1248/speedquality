@@ -2579,7 +2579,16 @@ export function renderReport(report, options = {}) {
   const copyActions = (position) => `
       <div class="copy-actions copy-actions-${position}" role="group" aria-label="${position === "top" ? "上方" : "下方"}复制报告">
         <button type="button" data-copy-source="copy-report-text">复制文本</button>
-        <button type="button" data-copy-source="copy-report-nodeseek" data-download="${escapeHtml(downloadBaseName)}_NodeSeek.md">复制为<span class="mobile-copy-break"></span>NodeSeek格式</button>
+        <div class="forum-copy">
+          <button class="forum-trigger" id="forum-trigger-${position}" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="forum-menu-${position}">
+            <span>复制论坛格式</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="forum-menu" id="forum-menu-${position}" role="menu" aria-labelledby="forum-trigger-${position}" hidden>
+            <button type="button" role="menuitem" tabindex="-1" data-copy-source="copy-report-nodeseek" data-copy-label="NodeSeek 格式" data-download="${escapeHtml(downloadBaseName)}_NodeSeek.md">复制为 NodeSeek 格式</button>
+            <button type="button" role="menuitem" tabindex="-1" data-copy-source="copy-report-markdown" data-copy-label="IDCFlare 论坛格式" data-download="${escapeHtml(downloadBaseName)}_IDCFlare.md">复制为 IDCFlare 论坛格式</button>
+            <button type="button" role="menuitem" tabindex="-1" data-copy-source="copy-report-nodeseek" data-copy-label="烧饼论坛格式" data-download="${escapeHtml(downloadBaseName)}_Shaobing.md">复制为烧饼论坛格式</button>
+          </div>
+        </div>
         <button class="general-md" type="button" data-copy-source="copy-report-markdown" data-download="${escapeHtml(downloadBaseName)}_Markdown.md">复制为<span class="mobile-copy-break"></span>通用Markdown</button>
       </div>`;
   const copyActionsTop = copyActions("top");
@@ -2694,6 +2703,65 @@ export function renderReport(report, options = {}) {
     (() => {
       const buttons = document.querySelectorAll("[data-copy-source]");
       const statuses = document.querySelectorAll(".copy-status");
+      const forumGroups = [...document.querySelectorAll(".forum-copy")];
+      const closeForumMenus = (restoreFocus = false) => {
+        for (const group of forumGroups) {
+          const trigger = group.querySelector(".forum-trigger");
+          const menu = group.querySelector(".forum-menu");
+          if (restoreFocus && !menu.hidden) trigger.focus({ preventScroll: true });
+          menu.hidden = true;
+          trigger.setAttribute("aria-expanded", "false");
+        }
+      };
+      const openForumMenu = (group, last = false) => {
+        closeForumMenus();
+        const trigger = group.querySelector(".forum-trigger");
+        const menu = group.querySelector(".forum-menu");
+        menu.hidden = false;
+        trigger.setAttribute("aria-expanded", "true");
+        const rect = trigger.getBoundingClientRect();
+        menu.style.left = Math.max(12, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 12)) + "px";
+        const below = rect.bottom + 8;
+        menu.style.top = (below + menu.offsetHeight <= window.innerHeight - 12
+          ? below : Math.max(12, rect.top - menu.offsetHeight - 8)) + "px";
+        const items = menu.querySelectorAll('[role="menuitem"]');
+        items[last ? items.length - 1 : 0].focus({ preventScroll: true });
+      };
+      for (const group of forumGroups) {
+        const trigger = group.querySelector(".forum-trigger");
+        const menu = group.querySelector(".forum-menu");
+        trigger.addEventListener("click", () => {
+          if (menu.hidden) openForumMenu(group);
+          else closeForumMenus();
+        });
+        trigger.addEventListener("keydown", (event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            openForumMenu(group, event.key === "ArrowUp");
+          }
+        });
+        menu.addEventListener("keydown", (event) => {
+          const items = [...menu.querySelectorAll('[role="menuitem"]')];
+          const index = items.indexOf(document.activeElement);
+          if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+            event.preventDefault();
+            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+              : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+            items[next].focus();
+          }
+          if (event.key === "Tab") closeForumMenus(true);
+        });
+      }
+      if (forumGroups.length) {
+        document.addEventListener("pointerdown", (event) => {
+          if (!event.target.closest(".forum-copy")) closeForumMenus();
+        });
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") closeForumMenus(true);
+        });
+        window.addEventListener("resize", () => closeForumMenus());
+        window.addEventListener("scroll", () => closeForumMenus(), { passive: true });
+      }
       let statusTimer;
       const setStatus = (message) => {
         for (const status of statuses) status.textContent = message;
@@ -2740,7 +2808,8 @@ export function renderReport(report, options = {}) {
         button.addEventListener("click", async () => {
           const source = document.getElementById(button.dataset.copySource || "");
           if (!source) return;
-          const label = button.textContent.trim();
+          const label = button.dataset.copyLabel || button.textContent.trim();
+          if (button.dataset.copyLabel) closeForumMenus(true);
           try {
             await copy(source.value);
             if (button.dataset.download) download(source.value, button.dataset.download);
@@ -2793,6 +2862,16 @@ export function renderReport(report, options = {}) {
     .copy-actions button:hover { border-color:#fff; background:#fff; color:#000; }
     .copy-actions button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
     .copy-actions .general-md { margin-left:auto; }
+    .forum-copy { position:relative; z-index:20; min-width:0; }
+    .copy-actions .forum-trigger { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; }
+    .forum-trigger svg { width:12px; height:12px; flex:none; transition:transform .15s; }
+    .forum-trigger[aria-expanded="true"] svg { transform:rotate(180deg); }
+    .copy-actions .forum-trigger[aria-expanded="true"] { color:#000; background:#fff; }
+    .forum-menu { position:fixed; width:242px; max-width:calc(100vw - 24px); padding:6px; border:1px solid #ffffff2d; border-radius:8px; background:#202029; box-shadow:0 12px 40px #0009; z-index:120; }
+    .forum-menu[hidden] { display:none !important; }
+    .copy-actions .forum-menu button { display:flex; align-items:center; width:100%; height:auto; min-height:44px; padding:11px 12px; border:0; border-radius:4px; text-align:left; color:#efedf4; font:400 13px/1.5 system-ui,sans-serif; background:transparent; }
+    .copy-actions .forum-menu button:hover,.copy-actions .forum-menu button:focus-visible { background:#ffffff10; color:#fff; outline:none; }
+    .copy-actions .forum-menu button:focus-visible { box-shadow:inset 0 0 0 1px #ffffff75; }
     .copy-status { position:fixed; z-index:100; left:20px; bottom:14px; margin:0; padding:10px 14px; border-radius:2px; background:#2a2a2a; box-shadow:0 1px 4px #00000080; color:#eee; font-size:14px; }
     .copy-status:empty { display:none; }
     .result-image { display:block; margin:0; overflow:auto; }
@@ -2844,6 +2923,8 @@ export function renderReport(report, options = {}) {
       .copy-actions { display:grid; grid-template-columns:.75fr 1.15fr 1.2fr; gap:6px; }
       .copy-actions button { min-width:0; height:auto; min-height:44px; padding:6px 4px; font:400 12px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; overflow-wrap:anywhere; }
       .copy-actions .general-md { margin-left:0; }
+      .copy-actions .forum-trigger { height:100%; gap:5px; }
+      .copy-actions .forum-menu button { min-height:48px; font-size:13px; }
       .mobile-copy-break { display:block; }
       .copy-status { right:0; bottom:0; left:0; border-radius:0; text-align:center; }
       .result-image { overflow:visible; }

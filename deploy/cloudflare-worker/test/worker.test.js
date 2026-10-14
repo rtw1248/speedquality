@@ -1649,13 +1649,17 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.doesNotMatch(page, /达标线：|统计口径：/);
   assert.doesNotMatch(page, /aria-label="推广"|SpeedQuality 社区节点计划/);
   assert.equal((page.match(/>复制文本<\/button>/g) || []).length, 2);
-  assert.equal((page.match(/>复制为<span class="mobile-copy-break"><\/span>NodeSeek格式<\/button>/g) || []).length, 2);
+  assert.equal((page.match(/<span>复制论坛格式<\/span>/g) || []).length, 2);
+  assert.equal((page.match(/>复制为 NodeSeek 格式<\/button>/g) || []).length, 2);
+  assert.equal((page.match(/>复制为 IDCFlare 论坛格式<\/button>/g) || []).length, 2);
+  assert.equal((page.match(/>复制为烧饼论坛格式<\/button>/g) || []).length, 2);
+  assert.doesNotMatch(page, /保留报告分页与彩色结果/);
   assert.equal((page.match(/>复制为<span class="mobile-copy-break"><\/span>通用Markdown<\/button>/g) || []).length, 2);
   const downloadBaseName = `SpeedQuality_湖北_${id}`;
   const fileNames = [...page.matchAll(/data-download="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(fileNames, [
-    `${downloadBaseName}_NodeSeek.md`, `${downloadBaseName}_Markdown.md`,
-    `${downloadBaseName}_NodeSeek.md`, `${downloadBaseName}_Markdown.md`,
+    `${downloadBaseName}_NodeSeek.md`, `${downloadBaseName}_IDCFlare.md`, `${downloadBaseName}_Shaobing.md`, `${downloadBaseName}_Markdown.md`,
+    `${downloadBaseName}_NodeSeek.md`, `${downloadBaseName}_IDCFlare.md`, `${downloadBaseName}_Shaobing.md`, `${downloadBaseName}_Markdown.md`,
   ]);
   assert.equal((page.match(/class="general-md"/g) || []).length, 2);
   assert.equal((page.match(/class="copy-status"/g) || []).length, 1);
@@ -1704,17 +1708,18 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
     ["copy-report-nodeseek", { value: ":::: tabs\n::::" }],
     ["copy-report-markdown", { value: "# 速度质量" }],
   ]);
-  const buttons = [
-    { dataset: { copySource: "copy-report-text" }, textContent: "复制文本" },
-    {
-      dataset: { copySource: "copy-report-nodeseek", download: fileNames[0] },
-      textContent: "复制为NodeSeek格式",
-    },
-    {
-      dataset: { copySource: "copy-report-markdown", download: fileNames[1] },
-      textContent: "复制为通用Markdown",
-    },
-  ];
+  const buttons = [...page.matchAll(/<button\b([^>]*data-copy-source="[^"]+"[^>]*)>([\s\S]*?)<\/button>/g)]
+    .slice(0, 5).map(([, attributes, content]) => ({
+      dataset: {
+        copySource: attributes.match(/data-copy-source="([^"]+)"/)?.[1],
+        copyLabel: attributes.match(/data-copy-label="([^"]+)"/)?.[1],
+        download: attributes.match(/data-download="([^"]+)"/)?.[1],
+      },
+      textContent: content.replace(/<[^>]*>/g, ""),
+    }));
+  assert.deepEqual(buttons.map((button) => button.dataset.copySource), [
+    "copy-report-text", "copy-report-nodeseek", "copy-report-markdown", "copy-report-nodeseek", "copy-report-markdown",
+  ]);
   for (const button of buttons) {
     button.addEventListener = (_event, listener) => { button.listener = listener; };
   }
@@ -1722,7 +1727,8 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   const statuses = [{ textContent: "" }];
   const document = {
     body: { append: () => {} },
-    querySelectorAll: (selector) => selector === ".copy-status" ? statuses : buttons,
+    querySelectorAll: (selector) => selector === ".copy-status" ? statuses
+      : selector === "[data-copy-source]" ? buttons : [],
     getElementById: (id) => sources.get(id),
     createElement: (tag) => {
       if (tag === "a") {
@@ -1778,17 +1784,24 @@ test("standalone report is saved, rendered, and HTML escaped", async () => {
   assert.deepEqual(statuses.map((status) => status.textContent), ["已复制：复制文本"]);
   await buttons[1].listener();
   await buttons[2].listener();
-  assert.deepEqual(copied, ["plain report", ":::: tabs\n::::", "# 速度质量"]);
+  assert.equal(statuses[0].textContent, "已复制：IDCFlare 论坛格式");
+  await buttons[3].listener();
+  await buttons[4].listener();
+  assert.deepEqual(copied, ["plain report", ":::: tabs\n::::", "# 速度质量", ":::: tabs\n::::", "# 速度质量"]);
   assert.deepEqual(downloads.map((download) => download.filename), [
     `${downloadBaseName}_NodeSeek_20261011000509123.md`,
-    `${downloadBaseName}_Markdown_20261011000509124.md`,
+    `${downloadBaseName}_IDCFlare_20261011000509124.md`,
+    `${downloadBaseName}_Shaobing_20261011000509125.md`,
+    `${downloadBaseName}_Markdown_20261011000509126.md`,
   ]);
   assert.equal(await blobs.get(downloads[0].href).text(), ":::: tabs\n::::");
   assert.equal(await blobs.get(downloads[1].href).text(), "# 速度质量");
+  assert.equal(await blobs.get(downloads[2].href).text(), ":::: tabs\n::::");
+  assert.equal(await blobs.get(downloads[3].href).text(), "# 速度质量");
   exportNow += 2000;
   await buttons[1].listener();
-  assert.equal(downloads[2].filename, `${downloadBaseName}_NodeSeek_20261011000511123.md`);
-  assert.equal(await blobs.get(downloads[2].href).text(), ":::: tabs\n::::");
+  assert.equal(downloads[4].filename, `${downloadBaseName}_NodeSeek_20261011000511123.md`);
+  assert.equal(await blobs.get(downloads[4].href).text(), ":::: tabs\n::::");
 
   // Existing shared links and their full IDs must survive the generator change.
   for (const legacyID of ["AtFndd9_BFJU", "N-C3o7Ysaaj9"]) {
@@ -2010,7 +2023,10 @@ test("NodeQuality snapshot is sanitized, stored in R2, and rendered in its tab",
   assert.doesNotMatch(visibleNQOutput, /\u001b|\u0001/);
   assert.doesNotMatch(page, /aria-label="推广"/);
   assert.equal((page.match(/>复制文本<\/button>/g) || []).length, 2);
-  assert.equal((page.match(/>复制为<span class="mobile-copy-break"><\/span>NodeSeek格式<\/button>/g) || []).length, 2);
+  assert.equal((page.match(/<span>复制论坛格式<\/span>/g) || []).length, 2);
+  assert.equal((page.match(/>复制为 NodeSeek 格式<\/button>/g) || []).length, 2);
+  assert.equal((page.match(/>复制为 IDCFlare 论坛格式<\/button>/g) || []).length, 2);
+  assert.equal((page.match(/>复制为烧饼论坛格式<\/button>/g) || []).length, 2);
   assert.equal((page.match(/>复制为<span class="mobile-copy-break"><\/span>通用Markdown<\/button>/g) || []).length, 2);
   const nqTopCopyActions = page.indexOf('class="copy-actions copy-actions-top"');
   const nqReportContainer = page.indexOf('class="nodequality-page"');
