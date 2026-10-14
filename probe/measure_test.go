@@ -103,31 +103,31 @@ func TestGenericNodeLifecycleAndTransfers(t *testing.T) {
 	if key != "test-key" {
 		t.Fatalf("activation key = %q", key)
 	}
-	downMbps, downBytes := runTransferPhase(
-		context.Background(), candidate.Download, key, 1, true,
+	down := runTransferPhase(
+		context.Background(), candidate.Download, key, true,
 		100*time.Millisecond, 700*time.Millisecond, 100,
 	)
-	upMbps, upBytes := runTransferPhase(
-		context.Background(), candidate.Upload, key, 1, false,
+	up := runTransferPhase(
+		context.Background(), candidate.Upload, key, false,
 		100*time.Millisecond, 700*time.Millisecond, 100,
 	)
-	if downMbps <= 0 || downBytes <= 0 {
-		t.Fatalf("download did not produce traffic: %.2f Mbps / %d bytes", downMbps, downBytes)
+	if down.Err != nil || down.Mbps <= 0 || down.Bytes <= 0 {
+		t.Fatalf("download did not produce traffic: %+v", down)
 	}
 	if nonce := downloadNonce.Load(); nonce == 0 || time.Since(time.Unix(nonce, 0)).Abs() > 5*time.Second {
 		t.Fatalf("download nonce is not a current Unix timestamp: %d", nonce)
 	}
-	if upMbps <= 0 || upBytes <= 0 {
-		t.Fatalf("upload did not produce traffic: %.2f Mbps / %d bytes", upMbps, upBytes)
+	if up.Err != nil || up.Mbps <= 0 || up.Bytes <= 0 {
+		t.Fatalf("upload did not produce traffic: %+v", up)
 	}
-	if downMbps > 105 || upMbps > 105 {
-		t.Fatalf("rate limiter exceeded target: download %.2f Mbps, upload %.2f Mbps", downMbps, upMbps)
+	if down.Mbps > 105 || up.Mbps > 105 {
+		t.Fatalf("rate limiter exceeded target: download %.2f Mbps, upload %.2f Mbps", down.Mbps, up.Mbps)
 	}
 	releaseCandidate(candidate, key)
 	if !released.Load() {
 		t.Fatal("release request was not received")
 	}
-	if strings.Contains(fmt.Sprint(downMbps, upMbps), "NaN") {
+	if strings.Contains(fmt.Sprint(down.Mbps, up.Mbps), "NaN") {
 		t.Fatal("throughput contains NaN")
 	}
 }

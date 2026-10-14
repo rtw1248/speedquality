@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -57,10 +56,22 @@ type ModeResult struct {
 	UploadBytes   int64   `json:"upload_bytes"`
 }
 
-type atomicCounter struct{ value atomic.Int64 }
+type atomicCounter struct {
+	value   atomic.Int64
+	started chan time.Time
+	once    sync.Once
+}
 
-func (counter *atomicCounter) Add(value int) { counter.value.Add(int64(value)) }
-func (counter *atomicCounter) Load() int64   { return counter.value.Load() }
+func (counter *atomicCounter) Add(value int) {
+	if value <= 0 {
+		return
+	}
+	counter.value.Add(int64(value))
+	if counter.started != nil {
+		counter.once.Do(func() { counter.started <- time.Now() })
+	}
+}
+func (counter *atomicCounter) Load() int64 { return counter.value.Load() }
 
 type byteRateLimiter struct {
 	mu             sync.Mutex
@@ -321,19 +332,11 @@ func runPreparedTarget(
 		"direction", "download",
 		"target_mbps", lease.TargetMbps,
 	)
-	downStarted := time.Now()
-	downMbps, downBytes := runTransferPhase(
-		ctx, prepared.candidate.Download, prepared.key, 1, true,
+	down := runTransferPhase(
+		ctx, prepared.candidate.Download, prepared.key, true,
 		preheatDuration, time.Duration(lease.DurationSeconds)*time.Second, lease.TargetMbps,
 	)
-	diagnostic(ctx, slog.LevelInfo, "transfer.completed",
-		"lease_id", lease.LeaseID,
-		"node_id", prepared.candidate.ID,
-		"direction", "download",
-		"duration_ms", time.Since(downStarted).Milliseconds(),
-		"bytes", downBytes,
-		"mbps", round(downMbps, 2),
-	)
+	logTransferResult(ctx, lease.LeaseID, prepared.candidate.ID, "download", down)
 	progress(2, "上传测速")
 	diagnostic(ctx, slog.LevelInfo, "transfer.started",
 		"lease_id", lease.LeaseID,
@@ -341,37 +344,31 @@ func runPreparedTarget(
 		"direction", "upload",
 		"target_mbps", lease.TargetMbps,
 	)
-	upStarted := time.Now()
-	upMbps, upBytes := runTransferPhase(
-		ctx, prepared.candidate.Upload, prepared.key, 1, false,
+	up := runTransferPhase(
+		ctx, prepared.candidate.Upload, prepared.key, false,
 		preheatDuration, time.Duration(lease.DurationSeconds)*time.Second, lease.TargetMbps,
 	)
-	diagnostic(ctx, slog.LevelInfo, "transfer.completed",
-		"lease_id", lease.LeaseID,
-		"node_id", prepared.candidate.ID,
-		"direction", "upload",
-		"duration_ms", time.Since(upStarted).Milliseconds(),
-		"bytes", upBytes,
-		"mbps", round(upMbps, 2),
-	)
+	logTransferResult(ctx, lease.LeaseID, prepared.candidate.ID, "upload", up)
 	progress(3, "完成")
 	result.Single = &ModeResult{
-		DownloadMbps:  round(downMbps, 2),
-		UploadMbps:    round(upMbps, 2),
-		DownloadBytes: downBytes,
-		UploadBytes:   upBytes,
+		DownloadMbps:  round(down.Mbps, 2),
+		UploadMbps:    round(up.Mbps, 2),
+		DownloadBytes: down.Bytes,
+		UploadBytes:   up.Bytes,
 	}
-	if result.Single.DownloadMbps > 0 && result.Single.UploadMbps > 0 {
+	if down.Err == nil && up.Err == nil {
 		result.Status = "ok"
+		result.Error = ""
 	} else {
+		result.Status = "failed"
 		failedDirections := make([]string, 0, 2)
-		if result.Single.DownloadMbps <= 0 {
-			failedDirections = append(failedDirections, "下载")
+		if down.Err != nil {
+			failedDirections = append(failedDirections, "下载："+publicTransferError(down.Err))
 		}
-		if result.Single.UploadMbps <= 0 {
-			failedDirections = append(failedDirections, "上传")
+		if up.Err != nil {
+			failedDirections = append(failedDirections, "上传："+publicTransferError(up.Err))
 		}
-		result.Error = strings.Join(failedDirections, "、") + "未产生有效数据"
+		result.Error = strings.Join(failedDirections, "；")
 	}
 	return result
 }
@@ -495,131 +492,6 @@ func performSmallRequest(ctx context.Context, spec RequestSpec, key string, time
 	return string(data), nil
 }
 
-func runTransferPhase(
-	parent context.Context,
-	spec RequestSpec,
-	key string,
-	threads int,
-	download bool,
-	preheat time.Duration,
-	duration time.Duration,
-	targetMbps int,
-) (float64, int64) {
-	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
-	counter := &atomicCounter{}
-	limiter := newByteRateLimiter(targetMbps)
-	var workers sync.WaitGroup
-	for index := 0; index < threads; index++ {
-		workers.Add(1)
-		go func(worker int) {
-			defer workers.Done()
-			if download {
-				downloadWorker(ctx, spec, key, worker, counter, limiter)
-			} else {
-				uploadWorker(ctx, spec, key, worker, counter, limiter)
-			}
-		}(index)
-		time.Sleep(40 * time.Millisecond)
-	}
-	preheatTimer := time.NewTimer(preheat)
-	select {
-	case <-parent.Done():
-		preheatTimer.Stop()
-		cancel()
-		waitWorkers(&workers)
-		return 0, 0
-	case <-preheatTimer.C:
-	}
-	baseline := counter.Load()
-	measurementStart := time.Now()
-	measurementTimer := time.NewTimer(duration)
-	select {
-	case <-parent.Done():
-		measurementTimer.Stop()
-		cancel()
-		waitWorkers(&workers)
-		return 0, counter.Load() - baseline
-	case <-measurementTimer.C:
-	}
-	measurementEnd := time.Now()
-	measuredBytes := counter.Load() - baseline
-	cancel()
-	waitWorkers(&workers)
-	elapsed := measurementEnd.Sub(measurementStart).Seconds()
-	if measuredBytes <= 0 || elapsed <= 0 {
-		return 0, measuredBytes
-	}
-	return float64(measuredBytes) * 8 / 1_000_000 / elapsed, measuredBytes
-}
-
-func downloadWorker(
-	ctx context.Context,
-	spec RequestSpec,
-	key string,
-	_ int,
-	counter *atomicCounter,
-	limiter *byteRateLimiter,
-) {
-	request, err := http.NewRequestWithContext(
-		ctx,
-		strings.ToUpper(spec.Method),
-		replaceTemplates(spec.URL, key, fmt.Sprintf("%d", time.Now().Unix())),
-		nil,
-	)
-	if err != nil {
-		return
-	}
-	applyHeaders(request, spec.Headers, key)
-	response, err := transferHTTPClient().Do(request)
-	if err != nil {
-		return
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 400 {
-		return
-	}
-	_, _ = io.CopyBuffer(
-		countingWriter{ctx: ctx, counter: counter, limiter: limiter},
-		response.Body,
-		make([]byte, limiterBurst),
-	)
-}
-
-func uploadWorker(
-	ctx context.Context,
-	spec RequestSpec,
-	key string,
-	worker int,
-	counter *atomicCounter,
-	limiter *byteRateLimiter,
-) {
-	prefix, err := base64.StdEncoding.DecodeString(spec.BodyPrefixBase64)
-	if err != nil {
-		return
-	}
-	body := &uploadReader{
-		prefix: prefix, counter: counter, ctx: ctx, limiter: limiter, seed: byte(worker + 1),
-	}
-	request, err := http.NewRequestWithContext(
-		ctx,
-		strings.ToUpper(spec.Method),
-		replaceTemplates(spec.URL, key, fmt.Sprintf("%d-%d", time.Now().UnixNano(), worker)),
-		io.LimitReader(body, spec.ContentLength),
-	)
-	if err != nil {
-		return
-	}
-	request.ContentLength = spec.ContentLength
-	applyHeaders(request, spec.Headers, key)
-	response, err := transferHTTPClient().Do(request)
-	if err != nil {
-		return
-	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
-}
-
 func transferHTTPClient() *http.Client {
 	transport := &http.Transport{
 		Proxy:                 nil,
@@ -648,18 +520,6 @@ func hasAnyPrefix(value string, prefixes []string) bool {
 		}
 	}
 	return false
-}
-
-func waitWorkers(workers *sync.WaitGroup) {
-	done := make(chan struct{})
-	go func() {
-		workers.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-	}
 }
 
 func round(value float64, places int) float64 {

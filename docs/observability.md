@@ -94,6 +94,12 @@ SPEEDQUALITY_DIAGNOSTIC_LOG=/tmp/sq-diagnostic.jsonl \
 该文件权限会尽量设为 `0600`。它只记录候选数量、阶段耗时、匿名 Node ID、字节数、速率和
 归类后的网络错误，不记录候选地址、请求 URL 或激活凭据。脚本不会删除用户指定的日志。
 
+`transfer.completed` 分别记录 `setup_ms`（连接及首次数据等待）、`measurement_ms`（正式
+测量耗时）和包含预热的 `duration_ms`，并给出 `status` 与 `error`。常见错误包括
+`transfer_start_timeout`（迟迟没有开始传输）、`transfer_ended_early`（节点提前结束）、
+`unexpected_eof`（响应被截断）、`transfer_no_data`（正式窗口内没有数据）和 `HTTP 429`
+等节点响应。失败方向的速率为 0；即使已有部分字节，也不会把异常期间的平均值报告为有效速率。
+
 ## 能力边界
 
 日志可以定位容量竞争、重复 JWT、释放遗漏、慢磁盘、慢锁和大多数锁卡住位置。日志本身不能

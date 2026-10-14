@@ -44,6 +44,14 @@ func diagnosticError(err error) string {
 		return diagnosticError(urlError.Err)
 	}
 	switch {
+	case errors.Is(err, errTransferStartTimeout):
+		return "transfer_start_timeout"
+	case errors.Is(err, errTransferEnded):
+		return "transfer_ended_early"
+	case errors.Is(err, errTransferNoData):
+		return "transfer_no_data"
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return "unexpected_eof"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "deadline_exceeded"
 	case errors.Is(err, context.Canceled):
