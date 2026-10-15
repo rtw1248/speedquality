@@ -141,7 +141,7 @@ func printReport(writer io.Writer, report Report) {
 	hasNodes := false
 	nodeWidth := displayWidth("节点")
 	for index, result := range report.Results {
-		nodes[index] = reportNodeDescription(result)
+		nodes[index] = reportNodeDescription(result, report.Family)
 		hasNodes = hasNodes || nodes[index] != ""
 		if width := displayWidth(nodes[index]); width > nodeWidth {
 			nodeWidth = width
@@ -217,7 +217,7 @@ func printReport(writer io.Writer, report Report) {
 	}
 }
 
-func reportNodeDescription(result MeasurementResult) string {
+func reportNodeDescription(result MeasurementResult, family string) string {
 	if !result.NodeUsed || len(result.NodeID) < 12 || result.NodeInfo == nil {
 		return ""
 	}
@@ -228,7 +228,11 @@ func reportNodeDescription(result MeasurementResult) string {
 	}
 	parts := []string{}
 	if info.Name != "" {
-		parts = append(parts, info.Name)
+		name := info.Name
+		if family == "v4" || family == "v6" {
+			name += "（" + displayFamily(family) + "）"
+		}
+		parts = append(parts, name)
 	} else {
 		if city != "" {
 			parts = append(parts, city)

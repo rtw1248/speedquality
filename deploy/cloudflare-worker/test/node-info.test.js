@@ -79,7 +79,8 @@ test('friendly names require capability 2 and the signature binds the full name'
   const reports = () => [{ region: { code: 'hb' }, family: 'v4', results: [{ carrier: 'ct', node_id: 'a'.repeat(32),
     node_used: true, node_info: { ...value.targets[0].candidates[0].node_info } }] }];
   const valid = reports(); await verifyReportNodeInfo(valid, env, 'session-a');
-  assert.equal(nodeDescription(valid[0].results[0]), '武汉电信1号 · 第三方');
+  assert.equal(nodeDescription(valid[0].results[0], valid[0].family), '武汉电信1号（IPv4） · 第三方');
+  assert.equal(valid[0].results[0].node_info.name, '武汉电信1号');
   for (const mutate of [r => r[0].results[0].node_info.name = '武汉电信2号',
     r => delete r[0].results[0].node_info.name, r => r[0].family = 'v6']) {
     const tampered = reports(); mutate(tampered); await verifyReportNodeInfo(tampered, env, 'session-a');
@@ -101,9 +102,9 @@ test('historical enrichment only accepts full ID, region, family and carrier reg
       { ...input.nodes[1], family: 'v6', name: '武汉电信2号', city: '武汉', source: 'third_party' }] });
   } } };
   await enrichNodeNames(reports, core);
-  assert.equal(nodeDescription(reports[0].results[0]), '武汉电信1号 · 第三方');
+  assert.equal(nodeDescription(reports[0].results[0], reports[0].family), '武汉电信1号（IPv4） · 第三方');
   assert.equal(reports[0].results[1].node_info, undefined);
   assert.equal(reports[0].results[2].node_info, undefined);
   await enrichNodeNames(reports, { NODE_CORE: { fetch() { throw new Error('offline'); } } });
-  assert.equal(nodeDescription(reports[0].results[0]), '武汉电信1号 · 第三方');
+  assert.equal(nodeDescription(reports[0].results[0], reports[0].family), '武汉电信1号（IPv4） · 第三方');
 });

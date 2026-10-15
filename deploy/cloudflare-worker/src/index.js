@@ -1,4 +1,4 @@
-import { normalizeNodeInfo, prepareNodeInfo, verifyReportNodeInfo, nodeDescription, enrichNodeNames } from "./node-info.js";
+import { normalizeNodeInfo, prepareNodeInfo, verifyReportNodeInfo, nodeDescription, nodeDisplayName, enrichNodeNames } from "./node-info.js";
 import { logEvent, requestID, routeLabel } from "./observability.js";
 import { reportImageResponse } from "./report-image-cache.js";
 import { prefersRunPage, renderRunPage } from "./run-page.js";
@@ -2128,9 +2128,9 @@ export function reportPreviewModel(report) {
       const metric = (text, code) => ({ text: text.replace("Mbps", ""), color: text === "-" ? "muted" : color(code) });
       return {
         label: `${CARRIER_NAMES[result.carrier]} · ${entry.family === "v4" ? "IPv4" : "IPv6"}`,
-        node: nodeDescription(result) ? {
+        node: nodeDescription(result, entry.family) ? {
           id: result.node_info?.name ? "" : result.node_id.slice(0, 12),
-          name: result.node_info?.name || "",
+          name: nodeDisplayName(result.node_info?.name, entry.family),
           city: result.node_info?.city_status === "conflict" ? "城市待核实" : result.node_info?.city || "",
           source: { third_party: "第三方", community: "自建", static: "静态" }[result.node_info?.source] || "",
         } : null,
@@ -2183,7 +2183,7 @@ function renderStructuredSpeedText(value, options = {}) {
     for (const [reportIndex, report] of group.reports.entries()) {
       if (reportIndex > 0) lines.push("");
       const rows = Array.isArray(report.results) ? report.results : [];
-      const nodes = rows.map((result) => nodeDescription(result));
+      const nodes = rows.map((result) => nodeDescription(result, report.family));
       const hasNodes = nodes.some(Boolean);
       const familyValue = String(report.family || "").toLowerCase();
       const family = familyValue === "v4" ? "IPv4" : familyValue === "v6"
@@ -2228,7 +2228,7 @@ function renderMobileSpeedReport(report, options) {
     <h2>${escapeHtml(group.name)}</h2>
     ${group.reports.map((entry) => {
       const rows = Array.isArray(entry.results) ? entry.results : [];
-      const nodes = rows.map((result) => nodeDescription(result));
+      const nodes = rows.map((result) => nodeDescription(result, entry.family));
       const hasNodes = nodes.some(Boolean);
       const familyValue = String(entry.family || "").toLowerCase();
       const family = familyValue === "v4" ? "IPv4" : familyValue === "v6" ? "IPv6" : familyValue.toUpperCase() || "IP";

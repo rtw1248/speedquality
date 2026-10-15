@@ -2407,7 +2407,7 @@ test("dual-stack metadata survives report submission without retaining proofs or
   core.fetch = async request => {
     if (new URL(request.url).pathname !== '/lease') return fetchCore(request);
     const lease = coreLease(await request.json());
-    lease.targets[0].candidates[0].node_info = {city:'武汉',city_status:'reported',source:'third_party'};
+    lease.targets[0].candidates[0].node_info = {city:'武汉',city_status:'reported',source:'third_party',name:'武汉电信1号'};
     return Response.json(lease);
   };
   const env = {DB, NODE_CORE:core, NODE_CORE_SECRET:'test-metadata-secret-at-least-16', RATE_LIMIT_SALT:'test-salt'};
@@ -2416,7 +2416,7 @@ test("dual-stack metadata survives report submission without retaining proofs or
   const peer = (await (await worker.fetch(sessionRequest({ip_mode:'v6'},'2001:db8::9'),env)).text()).trim();
   const reports = [];
   for (const [family,token,ip] of [['v4',primary,'203.0.113.9'],['v6',peer,'2001:db8::9']]) {
-    const req = leaseRequest(token,{family},ip); req.headers.set('X-SQ-Node-Info','1');
+    const req = leaseRequest(token,{family},ip); req.headers.set('X-SQ-Node-Info','2');
     const response=await worker.fetch(req,env); assert.equal(response.status,200);
     const candidate=(await response.json()).targets[0].candidates[0];
     const report=JSON.parse(structuredSpeedData()); report.family=family;
@@ -2430,9 +2430,17 @@ test("dual-stack metadata survives report submission without retaining proofs or
   const stored=[...DB.reports.values()][0];
   const storedReports=JSON.parse(stored.speed_data);
   assert.deepEqual(storedReports.map(r=>r.results[0].node_info.city),['武汉','武汉']);
+  assert.deepEqual(storedReports.map(r=>r.results[0].node_info.name),['武汉电信1号','武汉电信1号']);
   assert.doesNotMatch(stored.speed_data,/proof|2001:db8|203\.0\.113/);
   const copies=formatReportCopies(stored);
-  assert.match(JSON.stringify(copies),/武汉 · 0123456789ab · 第三方/);
+  for (const copy of Object.values(copies)) {
+    assert.ok(copy.includes('武汉电信1号（IPv4）'));
+    assert.ok(copy.includes('武汉电信1号（IPv6）'));
+  }
+  const page=renderReport(stored);
+  assert.equal((page.match(/武汉电信1号（IPv4） · 第三方/g)||[]).length,5);
+  assert.equal((page.match(/武汉电信1号（IPv6） · 第三方/g)||[]).length,5);
+  assert.deepEqual(reportPreviewModel(stored).rows.map(row=>row.node.name),['武汉电信1号（IPv4）','武汉电信1号（IPv6）']);
 });
 
 test("education tasks require a Route Key and stay bound to its node", async()=>{

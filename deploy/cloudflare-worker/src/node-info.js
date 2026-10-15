@@ -71,7 +71,13 @@ export async function verifyReportNodeInfo(reports, env, session) {
   }
 }
 
-export function nodeDescription(result, short = false) {
+// Keep the registered/signed name unchanged; the report supplies its IP family.
+export function nodeDisplayName(name, family) {
+  const protocol = { v4: 'IPv4', v6: 'IPv6' }[String(family || '').toLowerCase()];
+  return name && protocol ? `${name}（${protocol}）` : name || '';
+}
+
+export function nodeDescription(result, family, short = false) {
   // Failed preparation can contain a candidate ID for health accounting. It
   // does not mean that candidate was actually activated or measured.
   if (!/^[a-f0-9]{32}$/.test(result.node_id || "") ||
@@ -80,7 +86,7 @@ export function nodeDescription(result, short = false) {
   if (!info) return "";
   const city = info.city_status === "conflict" ? "城市待核实" : info.city;
   const source = { third_party: "第三方", community: "自建", static: "静态节点" }[info.source];
-  if (info.name) return [info.name, ...(short ? [] : [source])].join(" · ");
+  if (info.name) return [nodeDisplayName(info.name, family), ...(short ? [] : [source])].join(" · ");
   return [city, result.node_id.slice(0, 12), ...(short ? [] : [source])].filter(Boolean).join(" · ");
 }
 

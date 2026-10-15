@@ -111,9 +111,18 @@ export async function renderPreviewPNG(model) {
       text(row.label, 64, y, compact ? 20 : 24, "white");
       if (row.node) {
         let city = row.node.name || row.node.city;
-        if ([...city].some(ch => !SHARE_FONT[20][ch])) city = "城市详见报告";
-        if ([...city].length > 13) city = [...city].slice(0, 12).join("") + ".";
-        text([city, row.node.id].filter(Boolean).join(" · "), 64, y + 23, 20, "muted");
+        const protocol = city.match(/（IPv[46]）$/)?.[0] || "";
+        if ([...city].some(ch => !SHARE_FONT[20][ch])) city = "城市详见报告" + protocol;
+        const measure = value => [...value].reduce((sum, ch) => sum + glyph(20, ch).advance, 0);
+        const available = 408 - 64 - measure(row.node.source) - 12;
+        let description = [city, row.node.id].filter(Boolean).join(" · ");
+        if (measure(description) > available) {
+          const prefix = [...(protocol ? city.slice(0, -protocol.length) : city)];
+          const ending = protocol + (row.node.id ? " · " + row.node.id : "");
+          while (prefix.length && measure(prefix.join("") + "." + ending) > available) prefix.pop();
+          description = prefix.join("") + "." + ending;
+        }
+        text(description, 64, y + 23, 20, "muted");
         text(row.node.source, 408, y + 23, 20, "muted", "right");
       }
       const metricY = y + (row.node ? 10 : 0);

@@ -110,7 +110,8 @@ export const nodeMapClient = `(() => {
         for (const node of nodes) {
           const identity = element('div','node-identifiers');
           const city = cityLabel(node);
-          if (node.name || city) identity.append(element('span','node-city',node.name || city));
+          const name = node.name ? node.name + '（' + (node.family === 'v4' ? 'IPv4' : 'IPv6') + '）' : city;
+          if (name) identity.append(element('span','node-city',name));
           const code = element('code','',node.name ? node.id : node.id.slice(0,12));
           code.title = \`完整编号：\${node.id}\`;
           if (node.name) {

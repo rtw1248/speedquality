@@ -131,15 +131,23 @@ func TestFriendlyNodeNameAndLegacyDescription(t *testing.T) {
 	result := MeasurementResult{NodeUsed: true, NodeID: strings.Repeat("a", 32), NodeInfo: &NodeInfo{
 		City: "武汉", CityStatus: "verified", Source: "third_party", Name: "武汉电信1号",
 	}}
-	if got := reportNodeDescription(result); got != "武汉电信1号 · 第三方" {
-		t.Fatalf("friendly name: %q", got)
+	for family, expected := range map[string]string{
+		"v4": "武汉电信1号（IPv4） · 第三方",
+		"v6": "武汉电信1号（IPv6） · 第三方",
+	} {
+		if got := reportNodeDescription(result, family); got != expected {
+			t.Fatalf("friendly name for %s: %q", family, got)
+		}
+	}
+	if result.NodeInfo.Name != "武汉电信1号" {
+		t.Fatal("display formatting changed the signed name")
 	}
 	result.NodeInfo.Name = ""
-	if got := reportNodeDescription(result); got != "武汉 · aaaaaaaaaaaa · 第三方" {
+	if got := reportNodeDescription(result, "v4"); got != "武汉 · aaaaaaaaaaaa · 第三方" {
 		t.Fatalf("legacy description: %q", got)
 	}
 	result.NodeUsed = false
-	if got := reportNodeDescription(result); got != "" {
+	if got := reportNodeDescription(result, "v4"); got != "" {
 		t.Fatalf("unused node: %q", got)
 	}
 }
