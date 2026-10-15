@@ -4,6 +4,8 @@ import { reportImageResponse } from "./report-image-cache.js";
 import { prefersRunPage, renderRunPage } from "./run-page.js";
 import { renderNodeMap } from "./node-map.js";
 import { serveCoverage } from "./node-coverage.js";
+import { normalizeRetransmission, retransmissionText, retransmissionAnsiCode } from "./retransmission.js";
+import { preflightReportLink, reportIdentity, verifyReportLink, sortSQReports, linkedNQContext } from "./report-link.js";
 
 const SCRIPT_MARKER = "__SPEEDQUALITY_REPORT_BASE__";
 const PROBE_VERSION_MARKER = "__SPEEDQUALITY_PROBE_VERSION__";
@@ -75,6 +77,7 @@ const VERIFIED_STATUSES = new Set([
 ]);
 const REJECTED_BIND_STATUSES = new Set(["mismatch", "unverified"]);
 const RESULT_FIELDS = [
+  "sq_preflight_token",
   "tested_at",
   "regions",
   "mode",
@@ -572,9 +575,11 @@ export function validateSpeedData(value) {
         const uploadMbps = finiteMetric(mode.upload_mbps, 0, 1000000);
         const downloadBytes = finiteMetric(mode.download_bytes, 0, Number.MAX_SAFE_INTEGER);
         const uploadBytes = finiteMetric(mode.upload_bytes, 0, Number.MAX_SAFE_INTEGER);
+        const retransmission = normalizeRetransmission(mode.upload_retransmission);
         if ([downloadMbps, uploadMbps, downloadBytes, uploadBytes].some((metric) => metric == null) ||
-            !Number.isSafeInteger(downloadBytes) || !Number.isSafeInteger(uploadBytes)) return undefined;
-        return { download_mbps: downloadMbps, upload_mbps: uploadMbps, download_bytes: downloadBytes, upload_bytes: uploadBytes };
+            retransmission === undefined || !Number.isSafeInteger(downloadBytes) || !Number.isSafeInteger(uploadBytes)) return undefined;
+        return { download_mbps: downloadMbps, upload_mbps: uploadMbps, download_bytes: downloadBytes, upload_bytes: uploadBytes,
+          ...(retransmission ? { upload_retransmission: retransmission } : {}) };
       };
       const single = normalizeMode(item.single);
       const multi = normalizeMode(item.multi);
@@ -1573,8 +1578,8 @@ async function insertReport(env, report, now, expiresAt) {
           speed_url, speed_text, speed_data, duration_seconds, target_mbps,
           traffic_rx_bytes, traffic_tx_bytes,
           nq_url, nq_tested_at, nq_time_source, time_gap_seconds, nq_identity_reason,
-          bind_status, version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          bind_status, version, source_identity_hashes, sq_source_id, sq_source_tested_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
         now,
@@ -1600,6 +1605,9 @@ async function insertReport(env, report, now, expiresAt) {
         report.nqIdentityReason,
         report.bindStatus,
         report.version,
+        JSON.stringify(report.sourceIdentityHashes),
+        report.sqSourceID || "",
+        report.sqSourceTestedAt || null,
       ).run();
       if (result?.success !== false) return id;
     } catch (error) {
@@ -1784,6 +1792,7 @@ async function createReport(request, env) {
     });
   }
   const nodeInfoSessions = [sessionAuthorization.tokenHash];
+  const identitySources = [sessionAuthorization.session.client_hash];
   // Dual-stack runs use one source-bound session per address family. Possession
   // of the second bearer token binds its metadata without storing another IP.
   const peerToken = request.headers.get("x-sq-peer-session") || "";
@@ -1792,7 +1801,18 @@ async function createReport(request, env) {
     const peer = await env.DB.prepare("SELECT * FROM sessions WHERE token_hash = ? AND expires_at > ?")
       .bind(peerHash, now).first();
     if (peer && !peer.completed_at && sessionMatchesReport(peer, parsed.value) &&
-        (peer.community_node_id || "") === (sessionAuthorization.session.community_node_id || "")) nodeInfoSessions.push(peerHash);
+        (peer.community_node_id || "") === (sessionAuthorization.session.community_node_id || "")) {
+      nodeInfoSessions.push(peerHash);
+      identitySources.push(peer.client_hash);
+    }
+  }
+  parsed.value.sourceIdentityHashes = [...new Set((await Promise.all(identitySources.map((hash) => reportIdentity(hash, env)))).filter(Boolean))];
+  const linkToken = payload.params.get("sq_preflight_token");
+  if (linkToken) {
+    const plan = await verifyReportLink(linkToken, env, parsed.value.sourceIdentityHashes);
+    if (!plan) return textResponse("SQ 关联预检已失效或出口身份不匹配\n", 403, { "cache-control": "no-store" });
+    parsed.value.sqSourceID = plan.source;
+    parsed.value.sqSourceTestedAt = plan.tested_at;
   }
   await verifyReportNodeInfo(parsed.value.speedReports, env, nodeInfoSessions);
   parsed.value.speedData = JSON.stringify(parsed.value.speedReports);
@@ -2172,7 +2192,7 @@ function groupSpeedReports(value) {
 }
 
 function joinSpeedColumns(columns) {
-  return columns.slice(0, 4).join("  ") + (columns.length > 4 ? `      ${columns[4]}` : "");
+  return columns.slice(0, 5).join("  ") + (columns.length > 5 ? `      ${columns[5]}` : "");
 }
 
 function renderStructuredSpeedText(value, options = {}) {
@@ -2194,6 +2214,7 @@ function renderStructuredSpeedText(value, options = {}) {
       const headings = [
         ansiText(padDisplay(family, 8, "right"), "1;96", colored),
         ansiText(padDisplay("延迟", 10, "right"), "1;96", colored),
+        ansiText(padDisplay("重传率", 10, "right"), "1;96", colored),
         ansiText(padDisplay("单线程上传", 18, "right"), "1;96", colored),
         ansiText(padDisplay("单线程下载", 18, "right"), "1;96", colored),
       ];
@@ -2207,6 +2228,7 @@ function renderStructuredSpeedText(value, options = {}) {
         const columns = [
           ansiText(padDisplay(carrier, 8, "right"), "36", colored),
           ansiText(padDisplay(latency, 10, "right"), latencyAnsiCode(result.latency_ms), colored),
+          ansiText(padDisplay(retransmissionText(result.single?.upload_retransmission), 10, "right"), retransmissionAnsiCode(result.single?.upload_retransmission), colored),
           ansiText(padDisplay(uploadValue, 18, "right"), speedAnsiCode(uploadMbps, targetMbps), colored),
           ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps), colored),
         ];
@@ -2236,11 +2258,11 @@ function renderMobileSpeedReport(report, options) {
       const busy = rows.some((row) => ["节点繁忙", "同一来源已有测速任务"].includes(row.error));
       return `<div class="mobile-table-scroll"${hasNodes ? ` tabindex="0" role="region" aria-label="${escapeHtml(group.name)} ${escapeHtml(family)} 测速结果，可左右滑动"` : ""}>
       <table class="mobile-speed-table${hasNodes ? " has-nodes" : ""}" aria-label="${escapeHtml(group.name)} ${escapeHtml(family)} 单线程测速">
-        <colgroup><col class="carrier-column"><col class="latency-column"><col class="speed-column"><col class="speed-column">${hasNodes ? '<col>' : ''}</colgroup>
-        <thead><tr><th scope="col">${escapeHtml(family)}</th><th scope="col">延迟</th><th scope="col">上传 <small>Mbps</small></th><th scope="col">下载 <small>Mbps</small></th>${hasNodes ? '<th scope="col" class="node-column">节点</th>' : ''}</tr></thead>
+        <colgroup><col class="carrier-column"><col class="latency-column"><col class="retrans-column"><col class="speed-column"><col class="speed-column">${hasNodes ? '<col>' : ''}</colgroup>
+        <thead><tr><th scope="col">${escapeHtml(family)}</th><th scope="col">延迟</th><th scope="col">重传率</th><th scope="col">单线程上传 <small>Mbps</small></th><th scope="col">单线程下载 <small>Mbps</small></th>${hasNodes ? '<th scope="col" class="node-column">节点</th>' : ''}</tr></thead>
         <tbody>${rows.map((result, index) => {
           const values = speedRowValues(result, target);
-          return `<tr><th scope="row">${escapeHtml(values.carrier)}</th><td>${metric(values.latency, latencyAnsiCode(result.latency_ms))}</td><td>${metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target))}</td><td>${metric(values.downloadValue, speedAnsiCode(values.downloadMbps, target))}</td>${hasNodes ? `<td class="node-column">${escapeHtml(nodes[index])}</td>` : ''}</tr>`;
+          return `<tr><th scope="row">${escapeHtml(values.carrier)}</th><td>${metric(values.latency, latencyAnsiCode(result.latency_ms))}</td><td>${metric(retransmissionText(result.single?.upload_retransmission), retransmissionAnsiCode(result.single?.upload_retransmission))}</td><td>${metric(values.uploadValue, speedAnsiCode(values.uploadMbps, target))}</td><td>${metric(values.downloadValue, speedAnsiCode(values.downloadMbps, target))}</td>${hasNodes ? `<td class="node-column">${escapeHtml(nodes[index])}</td>` : ''}</tr>`;
         }).join("")}</tbody>
       </table></div>${busy ? '<p class="mobile-busy-note">部分项目因节点繁忙或同一来源已有任务而跳过（-）。</p>' : ""}`;
     }).join("")}
@@ -2378,7 +2400,9 @@ function reportVerificationNotice(report) {
     ? "NodeQuality 与本次测速的完整 IP 一致"
     : report.nq_identity_reason === "masked_ip_and_asn"
       ? "NodeQuality 的脱敏 IP 网段与本次测速匹配，且 ASN 一致"
-      : "NodeQuality 与本次测速的服务器身份信息匹配";
+      : report.nq_identity_reason === "linked_sq"
+        ? "NodeQuality 已与新测速校验身份，此历史 SQ 的出口身份与新测速匹配"
+        : "NodeQuality 与本次测速的服务器身份信息匹配";
   switch (report.bind_status) {
     case "verified":
       return {
@@ -2427,8 +2451,7 @@ function reportDownloadBaseName(report) {
   return `SpeedQuality_${regions}_${id}`;
 }
 
-export function formatReportCopies(report, options = {}) {
-  const hasNodeQuality = Boolean(report.nq_url);
+function speedCopyMaterial(report, options = {}) {
   const trafficRxBytes = Number(report.traffic_rx_bytes);
   const trafficTxBytes = Number(report.traffic_tx_bytes);
   const hasTraffic = report.traffic_rx_bytes != null && report.traffic_rx_bytes !== "" &&
@@ -2438,7 +2461,6 @@ export function formatReportCopies(report, options = {}) {
     Number.isSafeInteger(trafficRxBytes + trafficTxBytes);
   const reportUrl = normalizeHttpsUrl(options.reportUrl, 2048) ||
     stripUnsafeTerminalText(options.reportPath || "").split("\n", 1)[0];
-  const nodeQualityUrl = hasNodeQuality ? normalizeHttpsUrl(report.nq_url, 2048) : "";
   const structuredAnsi = renderStructuredSpeedText(report.speed_data, { colored: true });
   const speedAnsi = sanitizeAnsiTerminalText(structuredAnsi || report.speed_text).trim() ||
     "测速内容暂不可用。";
@@ -2464,12 +2486,26 @@ export function formatReportCopies(report, options = {}) {
     ? ansiText(verificationText, { ok: "92", warning: "33", danger: "1;91" }[verification.level], true) : "";
   const speedPlainMaterial = [headerText, verificationText, speedText, trafficText].filter(Boolean).join("\n\n");
   const speedAnsiMaterial = [headerAnsi, verificationAnsi, speedAnsi, trafficAnsiText].filter(Boolean).join("\n\n");
+  return { speedPlainMaterial, speedAnsiMaterial, verificationText };
+}
+
+export function formatReportCopies(report, options = {}) {
+  const hasNodeQuality = Boolean(report.nq_url);
+  const reportUrl = normalizeHttpsUrl(options.reportUrl, 2048) ||
+    stripUnsafeTerminalText(options.reportPath || "").split("\n", 1)[0];
+  const nodeQualityUrl = hasNodeQuality ? normalizeHttpsUrl(report.nq_url, 2048) : "";
+  const reports = sortSQReports(options.sqReports?.length ? options.sqReports : [report]);
+  const materials = reports.map((entry) => ({
+    report: entry,
+    title: reports.length > 1 ? `速度质量 ${formatTime(entry.tested_at)}` : "速度质量",
+    ...speedCopyMaterial(linkedNQContext(report, entry), options),
+  }));
   const nodeQuality = nodeQualityCopyPages(options.snapshot);
   const links = reportLinkLines(nodeQualityUrl, reportUrl);
 
   const plain = [];
   if (hasNodeQuality && nodeQuality.plainText) plain.push(nodeQuality.plainText);
-  plain.push(speedPlainMaterial);
+  for (const entry of materials) plain.push(entry.speedPlainMaterial);
   if (links) plain.push(links);
 
   const nodeSeek = [":::: tabs"];
@@ -2481,7 +2517,9 @@ export function formatReportCopies(report, options = {}) {
       nodeSeek.push(`::: tab-item ${page.title}\n${body}\n:::`);
     }
   }
-  nodeSeek.push(`::: tab-item 速度质量\n${markdownCodeBlock(speedAnsiMaterial, "ansi")}\n:::`);
+  for (const entry of materials) {
+    nodeSeek.push(`::: tab-item ${entry.title}\n${markdownCodeBlock(entry.speedAnsiMaterial, "ansi")}\n:::`);
+  }
   nodeSeek.push("::::");
   if (links) nodeSeek.push(links);
 
@@ -2494,11 +2532,13 @@ export function formatReportCopies(report, options = {}) {
       markdown.push(`# ${page.title}\n${body}`);
     }
   }
-  const speedUrl = normalizeHttpsUrl(report.speed_url, 2048);
-  const speedMarkdown = speedUrl
-    ? [verificationText ? markdownCodeBlock(verificationText) : "", `![SpeedQuality 测速结果](${speedUrl})`].filter(Boolean).join("\n\n")
-    : markdownCodeBlock(speedPlainMaterial);
-  markdown.push(`# 速度质量\n${speedMarkdown}`);
+  for (const entry of materials) {
+    const speedUrl = normalizeHttpsUrl(entry.report.speed_url, 2048);
+    const speedMarkdown = speedUrl
+      ? [entry.verificationText ? markdownCodeBlock(entry.verificationText) : "", `![SpeedQuality 测速结果](${speedUrl})`].filter(Boolean).join("\n\n")
+      : markdownCodeBlock(entry.speedPlainMaterial);
+    markdown.push(`# ${entry.title}\n${speedMarkdown}`);
+  }
   if (links) markdown.push(links);
 
   return {
@@ -2513,8 +2553,12 @@ function usageCount(value) {
 }
 
 export function renderReport(report, options = {}) {
+  const rootReport = report;
+  const sqReports = sortSQReports(options.sqReports?.length ? options.sqReports : [report]);
+  const selectedSQ = sqReports.find((entry) => entry.id === options.sqID) || rootReport;
+  report = linkedNQContext(rootReport, selectedSQ);
   const hasNodeQuality = Boolean(report.nq_url);
-  const preview = reportPreviewModel(report);
+  const preview = reportPreviewModel(rootReport);
   const shareUrl = normalizeHttpsUrl(options.reportUrl, 2048);
   const shareImageUrl = shareUrl ? `${shareUrl.split("?", 1)[0]}/preview-v1.png` : "";
   const socialHead = shareUrl ? `
@@ -2557,7 +2601,7 @@ export function renderReport(report, options = {}) {
   const activeEntry = tabs.find((tab) => tab.key === activeTab);
   const isSpeedPage = activeTab === "sq";
   const isNodeQualityPage = hasNodeQuality && !isSpeedPage;
-  const reportPath = options.reportPath || `/r/${report.id || ""}`;
+  const reportPath = options.reportPath || `/r/${rootReport.id || ""}`;
   const tabHref = (tab, index) => {
     if (options.tabLinks?.[tab.key]) return options.tabLinks[tab.key];
     return index === 0 ? reportPath : `${reportPath}?tab=${tab.key}`;
@@ -2571,7 +2615,8 @@ export function renderReport(report, options = {}) {
       <a href="${escapeHtml(tabHref(tab, index))}"${tab.key === activeTab ? ' aria-current="page"' : ""}>${escapeHtml(tab.label)}</a>`).join("");
   const showTabs = tabs.length > 1;
 
-  const copyFormats = formatReportCopies(report, {
+  const copyFormats = formatReportCopies(rootReport, {
+    sqReports,
     snapshot: options.snapshot,
     reportUrl: options.reportUrl,
     reportPath,
@@ -2599,6 +2644,12 @@ export function renderReport(report, options = {}) {
       <textarea id="copy-report-nodeseek" hidden readonly>${escapeHtml(copyFormats.nodeseek)}</textarea>
       <textarea id="copy-report-markdown" hidden readonly>${escapeHtml(copyFormats.markdown)}</textarea>
       <p class="copy-status" role="status" aria-live="polite"></p>`;
+
+  const timeNav = isSpeedPage && sqReports.length > 1 ? `<nav class="sq-time-tabs" aria-label="按北京时间时刻切换测速结果">${sqReports.map((entry) => {
+    const parts = entry.tested_at ? formatTime(entry.tested_at).split(" ") : ["日期未知", "时间未知"];
+    const href = options.sqLinks?.[entry.id] || `${reportPath}?tab=sq&sq=${entry.id}`;
+    return `<a href="${escapeHtml(href)}"${entry.id === report.id ? ' aria-current="page"' : ""}><strong>${escapeHtml(parts[1].replace("（北京时间）", ""))}</strong><small>${escapeHtml(parts[0])}${entry.id === rootReport.id ? " · 本次" : ""}</small></a>`;
+  }).join("")}</nav>` : "";
 
   let content;
   if (isSpeedPage) {
@@ -2694,7 +2745,7 @@ export function renderReport(report, options = {}) {
       <p class="report-links"><span>报告链接：<a href="${escapeHtml(canonicalReportUrl)}">${escapeHtml(canonicalReportUrl)}</a></span>${projectLink}</p>
     </section>` : "";
   const footerHtml = isSpeedPage
-    ? `<footer><a href="/nodes">节点地图 · 查看覆盖与贡献节点</a><br>报告将在 ${escapeHtml(formatTime(report.expires_at))} 后自动清理。</footer>`
+    ? `<footer><a href="/nodes">节点地图 · 查看覆盖与贡献节点</a><br>报告将在 ${escapeHtml(formatTime(rootReport.expires_at))} 后自动清理。</footer>`
     : "";
   const scriptNonce = /^[A-Za-z0-9_-]{16,64}$/.test(String(options.scriptNonce || ""))
     ? String(options.scriptNonce)
@@ -2900,6 +2951,11 @@ export function renderReport(report, options = {}) {
     .nq-terminal-scroll,.sq-terminal-scroll { overflow:auto; scrollbar-color:#efefef #797979; scrollbar-width:thin; }
     .linked-report .nq-terminal-scroll { min-height:500px; max-height:min(760px,calc(100vh - 205px)); }
     .sq-terminal-scroll { overflow-x:auto; overflow-y:hidden; }
+    .sq-time-tabs { display:flex; gap:12px; margin:12px 0 20px; padding:0; }
+    .sq-time-tabs a { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; height:auto; min-height:76px; padding:12px; border:1px solid var(--line); border-radius:8px; line-height:1.35; text-decoration:none; }
+    .sq-time-tabs a[aria-current="page"] { border-color:#95e6ff; background:rgba(149,230,255,.08); color:#95e6ff; }
+    .sq-time-tabs strong { font-size:18px; font-variant-numeric:tabular-nums; }
+    .sq-time-tabs small { font-size:12px; color:#99a9bd; }
     .linked-report .nq-output { min-width:1000px; }
     .notice { margin:0 0 10px; padding:7px 10px; border-radius:2px; font:13px/1.45 Consolas,"Liberation Mono","Courier New",monospace; }
     .notice.ok { border-color:#4ab118; background:var(--okbg); color:#9eff6e; }
@@ -2943,11 +2999,13 @@ export function renderReport(report, options = {}) {
       .mobile-table-scroll { overflow-x:auto; }
       .mobile-table-scroll + .mobile-table-scroll { margin-top:16px; }
       .mobile-speed-table { width:100%; table-layout:fixed; border-collapse:collapse; margin-top:6px; font-size:13px; font-variant-numeric:tabular-nums; }
-      .mobile-speed-table .carrier-column { width:17%; }
-      .mobile-speed-table .latency-column { width:23%; }
-      .mobile-speed-table.has-nodes { min-width:620px; }
+      .mobile-speed-table .carrier-column { width:12%; }
+      .mobile-speed-table .latency-column { width:17%; }
+      .mobile-speed-table .retrans-column { width:19%; }
+      .mobile-speed-table.has-nodes { min-width:720px; }
       .mobile-speed-table.has-nodes .carrier-column { width:44px; }
       .mobile-speed-table.has-nodes .latency-column { width:56px; }
+      .mobile-speed-table.has-nodes .retrans-column { width:66px; }
       .mobile-speed-table.has-nodes .speed-column { width:82px; }
       .mobile-speed-table th,.mobile-speed-table td { padding:9px 2px; text-align:right; white-space:nowrap; }
       .mobile-speed-table thead th { border-bottom:1px solid var(--line); color:#95e6ff; font-weight:600; }
@@ -2980,7 +3038,7 @@ export function renderReport(report, options = {}) {
   ${headerHtml}
   ${copyActionsTop}
   <main class="${isNodeQualityPage ? "nodequality-page" : hasNodeQuality ? "speedquality-addon-page" : "speedquality-standalone-page"}${showTabs ? "" : " single-page-report"}">
-    ${tabsShell}${noticeHtml}${content}${promotionHtml}${summaryHtml}
+    ${tabsShell}${timeNav}${noticeHtml}${content}${promotionHtml}${summaryHtml}
   </main>
   ${copyActionsBottom}
   ${footerHtml}
@@ -3048,17 +3106,34 @@ async function showReport(request, env, id) {
     const requestedTab = url.searchParams.get("tab") || "";
     const tab = /^[a-z0-9-]{1,35}$/.test(requestedTab) ? requestedTab : "";
     const speedReports = storedSpeedReports(report.speed_data);
-    const [snapshot, usage] = await Promise.all([
+    const [snapshot, usage, source] = await Promise.all([
       report.nq_url && request.method !== "HEAD"
         ? loadNodeQualitySnapshot(env, id)
         : null,
       readUsageCounters(env, now),
+      report.sq_source_id
+        ? env.DB.prepare("SELECT * FROM reports WHERE id = ? AND expires_at > ?").bind(report.sq_source_id, now).first()
+        : null,
       enrichNodeNames(speedReports, env),
     ]);
     report.speed_data = JSON.stringify(speedReports);
+    const sqReports = [report];
+    if (report.sq_source_id) {
+      if (source) {
+        const sourceSpeed = storedSpeedReports(source.speed_data);
+        await enrichNodeNames(sourceSpeed, env);
+        source.speed_data = JSON.stringify(sourceSpeed);
+        sqReports.push(source);
+      } else {
+        sqReports.push({ id: report.sq_source_id, tested_at: report.sq_source_tested_at,
+          speed_text: "原始 SQ 报告已过期或不可用。", speed_data: "", version: "", regions: "" });
+      }
+    }
     const scriptNonce = `${randomId()}${randomId()}`;
     const page = renderReport(report, {
       tab,
+      sqReports,
+      sqID: url.searchParams.get("sq") || "",
       snapshot,
       reportPath: url.pathname,
       reportUrl: `${url.origin}${url.pathname}`,
@@ -3311,6 +3386,11 @@ async function routeRequest(request, env, context) {
       return textResponse("Method Not Allowed\n", 405, { allow: "GET, HEAD" });
     }
     return serveProbeAsset(request, env, probeAssetMatch[1], probeAssetMatch[2], context);
+  }
+
+  if (url.pathname === "/api/reports/preflight") {
+    if (request.method !== "POST") return textResponse("Method Not Allowed\n", 405, { allow: "POST" });
+    return preflightReportLink(request, env, await reportIdentity(await clientHash(request, env), env));
   }
 
   if (url.pathname === "/api/results") {

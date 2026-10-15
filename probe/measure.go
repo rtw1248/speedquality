@@ -50,10 +50,11 @@ type MeasurementResult struct {
 }
 
 type ModeResult struct {
-	DownloadMbps  float64 `json:"download_mbps"`
-	UploadMbps    float64 `json:"upload_mbps"`
-	DownloadBytes int64   `json:"download_bytes"`
-	UploadBytes   int64   `json:"upload_bytes"`
+	DownloadMbps         float64              `json:"download_mbps"`
+	UploadMbps           float64              `json:"upload_mbps"`
+	DownloadBytes        int64                `json:"download_bytes"`
+	UploadBytes          int64                `json:"upload_bytes"`
+	UploadRetransmission *retransmissionStats `json:"upload_retransmission,omitempty"`
 }
 
 type atomicCounter struct {
@@ -351,10 +352,11 @@ func runPreparedTarget(
 	logTransferResult(ctx, lease.LeaseID, prepared.candidate.ID, "upload", up)
 	progress(3, "完成")
 	result.Single = &ModeResult{
-		DownloadMbps:  round(down.Mbps, 2),
-		UploadMbps:    round(up.Mbps, 2),
-		DownloadBytes: down.Bytes,
-		UploadBytes:   up.Bytes,
+		DownloadMbps:         round(down.Mbps, 2),
+		UploadMbps:           round(up.Mbps, 2),
+		DownloadBytes:        down.Bytes,
+		UploadBytes:          up.Bytes,
+		UploadRetransmission: up.Retransmission,
 	}
 	if down.Err == nil && up.Err == nil {
 		result.Status = "ok"

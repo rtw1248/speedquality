@@ -38,14 +38,14 @@ func TestReportUsesANSIColorsAndDisplayWidthAlignment(t *testing.T) {
 			break
 		}
 	}
-	if strings.Count(heading, cyan) != 4 || strings.Contains(heading, yellow) {
+	if strings.Count(heading, cyan) != 5 || strings.Contains(heading, yellow) {
 		t.Fatalf("report headings do not share the IPv4 color: %q", heading)
 	}
 	for _, expected := range []string{
-		"    IPv4        延迟          单线程上传          单线程下载",
-		"    电信         8ms          150.50Mbps           200Mbps ✓",
-		"    联通           -                失败                失败",
-		"    移动           -                   -                   -",
+		"    IPv4        延迟      重传率          单线程上传          单线程下载",
+		"    电信         8ms          —          150.50Mbps           200Mbps ✓",
+		"    联通           -          —                失败                失败",
+		"    移动           -          —                   -                   -",
 	} {
 		if !strings.Contains(plain, expected) {
 			t.Fatalf("plain report lacks %q:\n%s", expected, plain)
@@ -81,7 +81,7 @@ func TestPrintReportKeepsPartialMeasurementsVisible(t *testing.T) {
 			t.Fatalf("partial measurements should keep their own colors: %q", output.String())
 		}
 	}
-	if !strings.Contains(plain, "    电信        21ms                失败          123.45Mbps") ||
+	if !strings.Contains(plain, "    电信        21ms          —                失败          123.45Mbps") ||
 		strings.Contains(plain, "上传未产生有效数据") || strings.Contains(plain, "[失败]") {
 		t.Fatalf("partial failure should fit in a single row: %q", plain)
 	}

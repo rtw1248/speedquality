@@ -322,6 +322,21 @@ Content-Type: application/json
 
 ## 上传结果
 
+### SQ 关联预检
+
+`POST /api/reports/preflight`，表单仅接受一个 `sq_url`，必须是当前平台的 `/r/<ID>` 链接，
+可带 `?tab=sq` 等页面参数。服务端在测速前检查原报告未过期、没有再次关联其它SQ、
+且请求出口的身份摘要匹配。上限固定为 **两份 SQ（当前一次 + 一份历史）**。
+返回 `sq_limit: 2`、`sq_count: 2`、签名 `token` 和原报告的 `nq_url` 候选。
+该凭据固定原始报告 ID 和出口身份，有效6小时；不能更改为其它报告或从其它出口提交。
+双栈客户端可分别尝试两个出口，提交时用对应的已认证会话证明身份。
+
+超限返回409，历史身份资料缺失返回422，出口不匹配返回403，不存在或过期返回404。
+客户端必须在测速程序下载和节点申请之前处理这些错误。提交通过预检的关联后，即使历史报告
+在测速期间过期，也保留本次结果，历史位置标注不可用。报告内容不复制，不延长原报告保存期。
+
+### 结果字段
+
 ```http
 POST /api/results
 Authorization: Bearer SESSION_TOKEN
@@ -344,6 +359,12 @@ Content-Type: application/x-www-form-urlencoded
 | `traffic_tx_bytes` | 网卡发送字节差值 |
 | `nq_url` | 可选 NodeQuality 报告 |
 | `nq_identity_reason` | NQ 身份校验依据：`full_ip` 或 `masked_ip_and_asn` |
+| `sq_preflight_token` | 可选，关联预检返回的签名凭据，不能用报告 ID 代替 |
+
+`single.upload_retransmission` 是兼容旧客户端的可选对象：
+`{"sent_bytes":105000000,"retransmitted_bytes":5000000}`。两个字段均为同一上传连接、
+同一正式测量窗口内的 TCP 字节计数差；前者包含重传，后者不能大于前者。缺失表示不可用，
+不能补零。网页、终端与导出按 `retransmitted_bytes / sent_bytes * 100` 显示为4.76%。
 
 Worker 会重新校验结构化测速字段，并拒绝超过目标速率 5% 容差、包含多线程结果或与会话
 约束不一致的数据。动态模式下，报告保存后会把节点成功率、延迟、目标档位和实际吞吐反馈给
@@ -352,6 +373,10 @@ Provider。结果接口必须使用创建会话时取得的同源 Token；报告
 只保留 `/48`；完整地址不会新增到报告表。报告还会记录提交请求的 Cloudflare 元数据
 `asn` 和 `asOrganization`。这些信息由服务端生成，不接受客户端自填；旧报告不回填，
 公开报告和复制文本仅展示脱敏 IP。
+
+报告表另外保存来源会话摘要经独立用途HMAC派生的身份值，使用 `RATE_LIMIT_SALT` 作为密钥，
+不接受客户端自填，不向报告页面或导出公开。双栈经过认证的会话可保存两份摘要。未配置密钥
+时普通测速仍可用，SQ关联不可用；轮换密钥将使旧身份摘要不可匹配。升级前的报告不回填身份。
 
 ```http
 GET /api/features

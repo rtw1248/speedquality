@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ type transferMeasurement struct {
 	SampleDuration time.Duration
 	TotalDuration  time.Duration
 	Err            error
+	Retransmission *retransmissionStats
 }
 
 type transferCompletion struct {
@@ -49,13 +51,15 @@ func runTransferPhase(
 	ctx, cancel := context.WithCancel(parent)
 	counter := &atomicCounter{started: make(chan time.Time, 1)}
 	limiter := newByteRateLimiter(targetMbps)
+	tracker := &tcpStatsTracker{}
+	var tcpBaseline *retransmissionStats
 	done := make(chan transferCompletion, 1)
 	go func() {
 		var err error
 		if download {
 			err = downloadWorker(ctx, spec, key, counter, limiter)
 		} else {
-			err = uploadWorker(ctx, spec, key, counter, limiter)
+			err = uploadWorker(ctx, spec, key, counter, limiter, tracker)
 		}
 		done <- transferCompletion{finishedAt: time.Now(), err: err}
 	}()
@@ -66,6 +70,9 @@ func runTransferPhase(
 		// Snapshot before cancellation/worker cleanup, which must not enter the
 		// throughput denominator or add bytes from after the measurement window.
 		ended := time.Now()
+		if !download && !sampleStarted.IsZero() {
+			result.Retransmission = retransmissionDelta(tcpBaseline, tracker.snapshot())
+		}
 		if !sampleStarted.IsZero() {
 			result.Bytes = counter.Load() - baseline
 			result.SampleDuration = ended.Sub(sampleStarted)
@@ -103,6 +110,8 @@ func runTransferPhase(
 		}
 		if result.Err == nil {
 			result.Mbps = float64(result.Bytes) * 8 / 1_000_000 / result.SampleDuration.Seconds()
+		} else {
+			result.Retransmission = nil
 		}
 	}()
 
@@ -136,6 +145,9 @@ func runTransferPhase(
 		return
 	}
 	baseline = counter.Load()
+	if !download {
+		tcpBaseline = tracker.snapshot()
+	}
 	sampleStarted = time.Now()
 	sampleTimer := time.NewTimer(duration)
 	defer sampleTimer.Stop()
@@ -180,7 +192,7 @@ func downloadWorker(ctx context.Context, spec RequestSpec, key string, counter *
 	return errTransferEnded
 }
 
-func uploadWorker(ctx context.Context, spec RequestSpec, key string, counter *atomicCounter, limiter *byteRateLimiter) error {
+func uploadWorker(ctx context.Context, spec RequestSpec, key string, counter *atomicCounter, limiter *byteRateLimiter, trackers ...*tcpStatsTracker) error {
 	prefix, err := base64.StdEncoding.DecodeString(spec.BodyPrefixBase64)
 	if err != nil {
 		return err
@@ -193,7 +205,19 @@ func uploadWorker(ctx context.Context, spec RequestSpec, key string, counter *at
 	}
 	request.ContentLength = spec.ContentLength
 	applyHeaders(request, spec.Headers, key)
-	response, err := measurementHTTPClient().Do(request)
+	client := measurementHTTPClient()
+	if len(trackers) == 1 {
+		transport := client.Transport.(*http.Transport)
+		dial := transport.DialContext
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := dial(ctx, network, address)
+			if err == nil {
+				trackers[0].connected(conn)
+			}
+			return conn, err
+		}
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}
@@ -232,5 +256,6 @@ func logTransferResult(ctx context.Context, leaseID, nodeID, direction string, r
 		"setup_ms", result.SetupDuration.Milliseconds(),
 		"measurement_ms", result.SampleDuration.Milliseconds(),
 		"bytes", result.Bytes, "mbps", round(result.Mbps, 2), "error", diagnosticError(result.Err),
+		"upload_retransmission", result.Retransmission,
 	)
 }

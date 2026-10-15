@@ -47,7 +47,7 @@ function sampleReport(origin, bindStatus, options = {}) {
     time_gap_seconds: timeGapSeconds,
     nq_identity_reason: linked ? options.identityReason || "masked_ip_and_asn" : "",
     bind_status: bindStatus,
-    version: "1.2.0",
+    version: "1.6.0",
   };
 }
 
@@ -75,7 +75,8 @@ function sampleSpeedReport(code, name, family, now, options = {}) {
       latency_ms: latency,
       status: "ok",
       error: "",
-      single: { download_mbps: singleDown, upload_mbps: singleUp, download_bytes: 100000000, upload_bytes: 10000000 },
+      single: { download_mbps: singleDown, upload_mbps: singleUp, download_bytes: 100000000, upload_bytes: 10000000,
+        upload_retransmission: { sent_bytes: 10000000, retransmitted_bytes: [230000, 0, 10][index] } },
     })),
   };
 }
@@ -491,7 +492,39 @@ if (process.argv.includes("--build")) {
       "utf8",
     )
   ));
+  const morning = sampleReport(".", "verified", { id: "Morning12345", profile: "dual-stack" });
+  morning.tested_at = Date.parse("2026-10-16T08:10:00+08:00") / 1000;
+  morning.nq_tested_at = morning.tested_at - 300;
+  const evening = { ...sampleReport(".", "standalone", { id: "Evening12345", profile: "dual-stack" }),
+    tested_at: Date.parse("2026-10-13T21:40:00+08:00") / 1000 };
+  for (const sample of [morning, evening]) {
+    const data = JSON.parse(sample.speed_data);
+    for (const entry of data) for (const result of entry.results) {
+      result.node_info = { source: "third_party", city_status: "verified", city: "武汉",
+        name: `武汉${{ ct: "电信", cu: "联通", cm: "移动" }[result.carrier]}1号` };
+      if (sample === evening) {
+        result.single.download_mbps *= 0.5;
+        result.single.upload_mbps *= 0.6;
+        result.single.upload_retransmission.retransmitted_bytes = { ct: 1200000, cu: 200000, cm: 0 }[result.carrier];
+      }
+    }
+    sample.speed_data = JSON.stringify(data);
+  }
+  const comparisonLinks = { Morning12345: "./report-comparison-morning.html", Evening12345: "./report-comparison-evening.html" };
+  await Promise.all([morning, evening].map((selected) => writeFile(
+    new URL(`./preview/${comparisonLinks[selected.id].slice(2)}`, import.meta.url),
+    renderReport(morning, { tab: "sq", sqID: selected.id, sqReports: [evening, morning], sqLinks: comparisonLinks,
+      snapshot: previewSnapshot, reportUrl: "https://sq.example.com/r/Morning12345",
+      tabLinks: { ...linkedTabs, sq: comparisonLinks.Morning12345 },
+      usage: { today: 128, total: 12680 } }), "utf8")));
   const catalog = [
+    {
+      title: "早晚 SQ 对照与重传率",
+      items: [
+        ["report-comparison-morning.html", "两份 SQ：查看早间结果"],
+        ["report-comparison-evening.html", "两份 SQ：查看晚间结果"],
+      ],
+    },
     {
       title: "测速结果状态",
       items: [

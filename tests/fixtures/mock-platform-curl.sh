@@ -10,6 +10,7 @@ authorization=""
 write_out=""
 response_status="200"
 tested_at=""
+nq_url=""
 noproxy=""
 fail_on_http=0
 
@@ -37,11 +38,13 @@ while (($#)); do
       fi
       shift 2
       ;;
-    --data-urlencode)
+    --data-urlencode|--form-string)
       if [[ "$2" == family=* ]]; then
         lease_family="${2#family=}"
       elif [[ "$2" == tested_at=* ]]; then
         tested_at="${2#tested_at=}"
+      elif [[ "$2" == nq_url=* ]]; then
+        nq_url="${2#nq_url=}"
       fi
       shift 2
       ;;
@@ -65,6 +68,22 @@ if [[ -n "${MOCK_PLATFORM_EXPECTED_BASE:-}" && "$url" != "${MOCK_PLATFORM_EXPECT
   exit 99
 fi
 case "$url" in
+  */api/reports/preflight)
+    printf 'sq-preflight %s\n' "$curl_family" >> "$MOCK_PLATFORM_LOG"
+    response_status="${MOCK_SQ_PREFLIGHT_STATUS:-200}"
+    if [[ -n "${MOCK_SQ_PREFLIGHT_RESPONSE:-}" ]]; then
+      cp -- "$MOCK_SQ_PREFLIGHT_RESPONSE" "$output_file"
+    else
+      printf '{"token":"e30.%064d","nq_url":"%s"}\n' 0 "${MOCK_SQ_NQ_URL:-}" > "$output_file"
+    fi
+    ;;
+  */api/v1/ipinfo)
+    cp -- "${MOCK_NQ_IPINFO:?}" "$output_file"
+    ;;
+  */api/v1/record/*)
+    printf 'nq-verify %s\n' "${url##*/}" >> "$MOCK_PLATFORM_LOG"
+    cp -- "${MOCK_NQ_RECORD_DIR:?}/${url##*/}.json" "$output_file"
+    ;;
   */api/time)
     if [[ "$output_file" == /dev/null ]]; then
       [[ "$noproxy" == '*' ]] || exit 99
@@ -121,6 +140,9 @@ EOF
     fi
     ;;
   */api/results)
+    if [[ -n "${MOCK_NQ_SELECTED_FILE:-}" ]]; then
+      printf '%s\n' "$nq_url" > "$MOCK_NQ_SELECTED_FILE"
+    fi
     if [[ -n "${MOCK_PLATFORM_REPORT_TIME_FILE:-}" ]]; then
       printf '%s\n' "$tested_at" > "$MOCK_PLATFORM_REPORT_TIME_FILE"
     fi

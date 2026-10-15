@@ -2,7 +2,8 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.5.2"
+readonly SPEEDQUALITY_VERSION="1.6.0"
+# Keep direct GitHub runs on the deployed probe until the next release is live.
 readonly FALLBACK_PROBE_VERSION="v1.5.2"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
@@ -35,6 +36,11 @@ fi
 PROBE_BASE="${SPEEDQUALITY_PROBE_BASE:-}"
 
 NODEQUALITY_URL=""
+SQ_REPORT_URL=""
+SQ_PREFLIGHT_TOKEN=""
+SQ_NODEQUALITY_URL=""
+declare -a NQ_CANDIDATE_URLS=() NQ_VERIFIED_URLS=() NQ_VERIFIED_EPOCHS=()
+declare -a NQ_VERIFIED_SOURCES=() NQ_VERIFIED_REASONS=() NQ_VERIFIED_SNAPSHOTS=()
 NODE_ROUTE_KEY=""
 NODE_ROUTE_REGION=""
 NODE_ROUTE_CARRIER=""
@@ -154,7 +160,8 @@ SpeedQuality 选项:
   -v4, --ipv4             仅测试 IPv4；默认自动测试可用的 IPv4 和 IPv6
   -v6, --ipv6             仅测试 IPv6；不能与 -v4 同时使用
   -i, --interactive       手动选择地区、测速档位和报告关联；默认直接测速
-      --nq URL            绑定已有 NodeQuality 报告 URL 或报告 token
+      --sq URL            关联 1 份历史 SQ，含本次最多 2 份；测速前校验，不支持继续叠加
+      --nq URL            关联 NQ；多份候选先校验身份，选择距本次测速时间最近的一份
       --node ROUTE_KEY    精确使用自己的 SQ 节点；不传 -p 时采用节点登记省份
       --allow-parallel    检测到其他 SQ 任务时直接继续，仍受平台并发限制
   -l, --list-provinces    显示支持的省份代码
@@ -176,6 +183,7 @@ SpeedQuality 选项:
   $run_command -p '湖北，北京' -s 100 -v4
   $run_command -p hb -s 100 -v6
   $run_command -p hb --nq https://nodequality.com/r/REPORT_TOKEN
+  $run_command -p hb --sq https://sq.yolo2.cc/r/REPORT_ID
   $run_command --node sqn_YOUR_ROUTE_KEY -s 200
 EOF
 }
@@ -919,6 +927,19 @@ parse_args() {
         NODEQUALITY_URL="${1#*=}"
         shift
         ;;
+      --sq)
+        require_value "$1" "$#"
+        [[ -z "$SQ_REPORT_URL" ]] || die "--sq 只能指定一个链接，关联 1 份历史 SQ，含本次最多 2 份；测速尚未开始"
+        [[ -n "$2" ]] || die "--sq 需要 SQ 报告链接"
+        SQ_REPORT_URL="$2"
+        shift 2
+        ;;
+      --sq=*)
+        [[ -z "$SQ_REPORT_URL" ]] || die "--sq 只能指定一个链接，关联 1 份历史 SQ，含本次最多 2 份；测速尚未开始"
+        SQ_REPORT_URL="${1#*=}"
+        [[ -n "$SQ_REPORT_URL" ]] || die "--sq 需要 SQ 报告链接"
+        shift
+        ;;
       --node)
         require_value "$1" "$#"
         NODE_ROUTE_KEY="$2"
@@ -1185,10 +1206,10 @@ bind_nodequality_result() {
   local time_status report_time gap_seconds report_epoch time_source gap_display
 
   [[ -n "$NODEQUALITY_URL" ]] || return 0
-  NODEQUALITY_SNAPSHOT_FILE="$TEMP_DIR/nodequality-snapshot.json"
+  NODEQUALITY_SNAPSHOT_FILE="${1:-$TEMP_DIR/nodequality-snapshot.json}"
   info "正在校验 NodeQuality 报告与当前服务器身份是否匹配"
   if ! fetch_nodequality_record; then
-    warn "无法读取 NodeQuality 报告，已拒绝绑定；分享页将只包含测速结果"
+    warn "无法读取 NodeQuality 报告，该份报告不会关联"
     BIND_STATUS="unverified"
     return 0
   fi
@@ -1197,7 +1218,7 @@ bind_nodequality_result() {
   status=$?
   set -e
   if ((status != 0)) || [[ -z "$analysis" ]]; then
-    warn "NodeQuality 报告解析失败，已拒绝绑定；分享页将只包含测速结果"
+    warn "NodeQuality 报告解析失败，该份报告不会关联"
     BIND_STATUS="unverified"
     return 0
   fi
@@ -1239,7 +1260,7 @@ bind_nodequality_result() {
       BIND_STATUS="mismatch"
       warn "NodeQuality 报告与当前服务器身份不匹配"
       warn "当前服务器: ${current_ip:-未知} / AS${current_asn:-未知}；报告: ${report_ips:-未知} / AS${report_asn:-未知}（$reason）"
-      warn "已拒绝绑定，分享链接只包含本次测速结果"
+      warn "已拒绝绑定该份 NodeQuality 报告"
       ;;
     *)
       BIND_STATUS="unverified"
@@ -1247,6 +1268,115 @@ bind_nodequality_result() {
       warn "已拒绝绑定，分享链接只包含本次测速结果"
       ;;
   esac
+}
+
+preflight_sq_report() {
+  [[ -n "$SQ_REPORT_URL" ]] || return 0
+  validate_https_url "$REPORT_BASE" || die "分享服务地址无效；测速尚未开始"
+  local response_file="$TEMP_DIR/sq-preflight.json" status error_code message source_id curl_family
+  local -a families=("$PRIMARY_CURL_FAMILY")
+  if [[ "$RUN_FAMILIES" == *v4* && "$RUN_FAMILIES" == *v6* ]]; then
+    if [[ "$PRIMARY_CURL_FAMILY" == "-4" ]]; then families+=(-6); else families+=(-4); fi
+  fi
+  info "--sq 最多关联 1 份历史 SQ，含本次共 2 份；正在进行测速前校验"
+  for curl_family in "${families[@]}"; do
+    if ! status=$(curl "$curl_family" --proto '=https' --tlsv1.2 -sS \
+      --connect-timeout 8 --max-time 20 --write-out '%{http_code}' \
+      --data-urlencode "sq_url=$SQ_REPORT_URL" \
+      "${REPORT_BASE%/}/api/reports/preflight" -o "$response_file"); then
+      die "无法完成 SQ 关联预检；测速尚未开始，请稍后重试或去掉 --sq"
+    fi
+    if [[ "$status" == "200" ]]; then
+      SQ_PREFLIGHT_TOKEN=$(json_string_field "$response_file" token)
+      [[ "$SQ_PREFLIGHT_TOKEN" =~ ^[A-Za-z0-9_-]+\.[a-f0-9]{64}$ ]] \
+        || die "SQ 关联预检返回无效凭据；测速尚未开始"
+      SQ_NODEQUALITY_URL=$(json_string_field "$response_file" nq_url)
+      success "SQ 关联预检通过：一份历史 SQ 加本次测速，共 2 份"
+      return 0
+    fi
+    error_code=$(json_string_field "$response_file" error)
+    [[ "$error_code" == "source_identity_mismatch" ]] || break
+  done
+  message=$(json_string_field "$response_file" message)
+  source_id=$(json_string_field "$response_file" source_id)
+  if [[ "$source_id" =~ ^[A-Za-z0-9_-]{12}$ ]]; then
+    info "可改用其中的原始单份报告：${REPORT_BASE%/}/r/$source_id"
+  fi
+  die "${message:-SQ 关联预检失败（HTTP $status）}；测速尚未开始。请更换单份报告链接或去掉 --sq"
+}
+
+configure_nodequality_candidates() {
+  local value normalized
+  for value in "$NODEQUALITY_URL" "$SQ_NODEQUALITY_URL"; do
+    [[ -n "$value" ]] || continue
+    normalized=$(normalize_nodequality_url "$value") \
+      || die "NodeQuality 链接无效，应为 https://nodequality.com/r/<token>；测速尚未开始"
+    if [[ " ${NQ_CANDIDATE_URLS[*]-} " != *" $normalized "* ]]; then
+      NQ_CANDIDATE_URLS+=("$normalized")
+    fi
+  done
+  ((${#NQ_CANDIDATE_URLS[@]} > 0)) || return 0
+  check_nodequality_binding_availability
+  if ((NODEQUALITY_BINDING_ENABLED == 0)); then
+    warn "SpeedQuality 当前已暂停 NodeQuality 关联；本次将继续测速并生成 SQ 报告"
+    NQ_CANDIDATE_URLS=()
+    NODEQUALITY_URL=""
+  fi
+}
+
+prepare_nodequality_candidates() {
+  ((${#NQ_CANDIDATE_URLS[@]} > 0)) || return 0
+  local index=0 value
+  SPEED_TEST_EPOCH=$(measurement_epoch)
+  info "--nq 候选 ${#NQ_CANDIDATE_URLS[@]} 份：逐份校验身份，仅保留通过校验且距本次测速时间最近的一份"
+  for value in "${NQ_CANDIDATE_URLS[@]}"; do
+    NODEQUALITY_URL="$value"
+    BIND_STATUS="standalone"
+    bind_nodequality_result "$TEMP_DIR/nodequality-snapshot-$index.json"
+    if has_verified_nodequality; then
+      NQ_VERIFIED_URLS+=("$NODEQUALITY_URL")
+      NQ_VERIFIED_EPOCHS+=("$NODEQUALITY_REPORT_EPOCH")
+      NQ_VERIFIED_SOURCES+=("$NODEQUALITY_TIME_SOURCE")
+      NQ_VERIFIED_REASONS+=("$NODEQUALITY_IDENTITY_REASON")
+      NQ_VERIFIED_SNAPSHOTS+=("$NODEQUALITY_SNAPSHOT_FILE")
+    fi
+    index=$((index + 1))
+  done
+  NODEQUALITY_URL=""
+  if ((${#NQ_VERIFIED_URLS[@]} > 0)); then BIND_STATUS="standalone"; fi
+}
+
+select_nodequality_candidate() {
+  if ((${#NQ_VERIFIED_URLS[@]} == 0)); then
+    if ((${#NQ_CANDIDATE_URLS[@]} > 0)); then
+      warn "没有通过身份校验的 NQ 候选，本次报告仅包含 SQ 结果"
+    fi
+    return 0
+  fi
+  local index epoch gap best=0 best_gap=9223372036854775807
+  # Explicit --nq is first, and wins ties. Known times outrank unknown times.
+  for index in "${!NQ_VERIFIED_URLS[@]}"; do
+    epoch="${NQ_VERIFIED_EPOCHS[$index]}"
+    [[ "$epoch" =~ ^[0-9]+$ ]] || continue
+    gap=$((SPEED_TEST_EPOCH - 10#$epoch))
+    ((gap >= 0)) || gap=$((-gap))
+    if ((gap < best_gap)); then best="$index"; best_gap="$gap"; fi
+  done
+  NODEQUALITY_URL="${NQ_VERIFIED_URLS[$best]}"
+  NODEQUALITY_REPORT_EPOCH="${NQ_VERIFIED_EPOCHS[$best]}"
+  NODEQUALITY_TIME_SOURCE="${NQ_VERIFIED_SOURCES[$best]}"
+  NODEQUALITY_IDENTITY_REASON="${NQ_VERIFIED_REASONS[$best]}"
+  NODEQUALITY_SNAPSHOT_FILE="${NQ_VERIFIED_SNAPSHOTS[$best]}"
+  NODEQUALITY_TIME_GAP_SECONDS=""
+  BIND_STATUS="verified_time_unknown"
+  if [[ "$NODEQUALITY_REPORT_EPOCH" =~ ^[0-9]+$ ]]; then
+    NODEQUALITY_TIME_GAP_SECONDS="$best_gap"
+    BIND_STATUS="verified"
+    ((best_gap <= MAX_TIME_GAP_MINUTES * 60)) || BIND_STATUS="verified_stale"
+    success "NQ 已选择身份校验通过且距本次测速最近的一份，相差 $(format_time_gap "$best_gap")"
+  else
+    warn "通过身份校验的 NQ 均无法确认检测时间，保留首份并标注时间未知"
+  fi
 }
 
 sha256_file() {
@@ -1640,6 +1770,7 @@ run_speedtest() {
     traffic_before=$(read_network_counters || true)
   fi
   resolve_probe_binary
+  prepare_nodequality_candidates
   create_speed_session
   SPEED_LOG="$TEMP_DIR/speedquality.log"
   SPEED_DATA_FILE="$TEMP_DIR/speedquality-results.ndjson"
@@ -1822,6 +1953,14 @@ publish_result() {
     fi
   fi
 
+  if [[ -n "$SQ_PREFLIGHT_TOKEN" ]]; then
+    if ((use_snapshot == 1)); then
+      form+=(--form-string "sq_preflight_token=$SQ_PREFLIGHT_TOKEN")
+    else
+      form+=(--data-urlencode "sq_preflight_token=$SQ_PREFLIGHT_TOKEN")
+    fi
+  fi
+
   if [[ -n "${SPEEDQUALITY_REPORT_RESPONSE_FILE:-}" ]]; then
     if [[ ! -r "$SPEEDQUALITY_REPORT_RESPONSE_FILE" ]]; then
       warn "分享服务测试响应不可读，测速结果只显示在终端"
@@ -1859,23 +1998,13 @@ main() {
   : > "$TEMP_DIR/$TEMP_MARKER_NAME"
   register_run
   prepare_speed_selection
-
-  if [[ -n "$NODEQUALITY_URL" ]]; then
-    NODEQUALITY_URL=$(normalize_nodequality_url "$NODEQUALITY_URL") \
-      || die "NodeQuality 链接无效，应为 https://nodequality.com/r/<token>"
-    check_nodequality_binding_availability
-    if ((NODEQUALITY_BINDING_ENABLED == 0)); then
-      warn "SpeedQuality 当前已暂停 NodeQuality 关联；本次将继续测速并生成独立 SQ 报告"
-      NODEQUALITY_URL=""
-    fi
-  fi
+  preflight_sq_report
+  configure_nodequality_candidates
 
   prepare_platform_time
   run_speedtest
 
-  if [[ -n "$NODEQUALITY_URL" ]]; then
-    bind_nodequality_result
-  fi
+  select_nodequality_candidate
 
   publish_result
 }

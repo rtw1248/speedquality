@@ -151,6 +151,7 @@ func printReport(writer io.Writer, report Report) {
 	headings := []tableColumn{
 		{family, 8, "right", cyan},
 		{"延迟", 10, "right", cyan},
+		{"重传率", 10, "right", cyan},
 		{"单线程上传", 18, "right", cyan},
 		{"单线程下载", 18, "right", cyan},
 	}
@@ -187,6 +188,7 @@ func printReport(writer io.Writer, report Report) {
 			columns := []tableColumn{
 				{carrier, 8, "right", cyan},
 				{latency, 10, "right", latencyCellColor},
+				{displayRetransmission(result.Single), 10, "right", retransmissionColor(result.Single)},
 				{upload, 18, "right", uploadColor},
 				{download, 18, "right", downloadColor},
 			}
@@ -207,6 +209,7 @@ func printReport(writer io.Writer, report Report) {
 		columns := []tableColumn{
 			{carrier, 8, "right", cyan},
 			{displayLatency(result.Latency), 10, "right", latencyColor(result.Latency)},
+			{displayRetransmission(result.Single), 10, "right", retransmissionColor(result.Single)},
 			{upload, 18, "right", uploadColor},
 			{download, 18, "right", downloadColor},
 		}
@@ -282,7 +285,7 @@ func writeColumns(writer io.Writer, columns []tableColumn, reset string) {
 	for index, column := range columns {
 		if index > 0 {
 			separator := "  "
-			if index == 4 {
+			if index == 5 {
 				separator = "      "
 			}
 			_, _ = io.WriteString(writer, separator)

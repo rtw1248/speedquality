@@ -137,6 +137,83 @@ class ClientLifecycle(unittest.TestCase):
             self.assertEqual(len(measured), count * 10)
             self.assert_clean()
 
+    def test_sq_rejects_second_argument_before_download(self):
+        for second in [["--sq", "https://reports.example/r/ZYXWVUTSRQPO"],
+                       ["--sq=https://reports.example/r/ZYXWVUTSRQPO"]]:
+            result = self.run_client(["-p", "hb", "--sq", "https://reports.example/r/AbCdEfGhIjKl"] + second)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("含本次最多 2 份", result.stdout)
+            self.assertFalse((self.base / "platform.log").exists())
+            self.assert_clean()
+
+    def test_sq_failures_stop_before_binary_session_or_measurement(self):
+        for status, code, message in [
+            (409, "sq_limit_exceeded", "该链接已包含 2 份 SQ，不能继续叠加"),
+            (422, "source_identity_unavailable", "旧报告缺少可核验的出口身份摘要"),
+            (403, "source_identity_mismatch", "出口身份不匹配"),
+            (404, "source_unavailable", "SQ 报告不存在或已过期"),
+        ]:
+            with self.subTest(status=status):
+                response = self.base / "sq-preflight.json"
+                response.write_text(json.dumps({"error": code, "message": message}, ensure_ascii=False))
+                result = self.run_client(["-p", "hb", "--sq", "https://reports.example/r/AbCdEfGhIjKl"], {
+                    "MOCK_SQ_PREFLIGHT_STATUS": str(status), "MOCK_SQ_PREFLIGHT_RESPONSE": str(response)})
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(message, result.stdout)
+                self.assertIn("测速尚未开始", result.stdout)
+                log = (self.base / "platform.log").read_text()
+                self.assertNotIn("download-probe", log)
+                self.assertNotIn("session ", log)
+                self.assertFalse((self.base / "started.txt").exists())
+                self.assert_clean()
+
+    def test_sq_preflight_runs_before_download_and_measurement(self):
+        result = self.run_client(["-p", "hb", "--sq", "https://reports.example/r/AbCdEfGhIjKl?tab=sq"])
+        self.assertEqual(result.returncode, 0, result.stdout)
+        log = (self.base / "platform.log").read_text()
+        self.assertLess(log.index("sq-preflight"), log.index("download-probe"))
+        self.assertIn("共 2 份", result.stdout)
+        self.assert_clean()
+
+    def test_linked_nq_candidates_are_verified_then_nearest_is_selected(self):
+        direct = "DirectNQReportToken1234"
+        inherited = "InheritedNQReportToken1234"
+        info = self.base / "ipinfo.json"
+        info.write_text(json.dumps({"ip": "203.0.113.9", "asn": 64500, "ts": int(time.time())}))
+        reference_time = int(time.time())
+
+        def record(token, age, address="203.0.113.9"):
+            archive = io.BytesIO()
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
+                if age is not None:
+                    stamp = time.strftime("%Y-%m-%d %H:%M:%S CST", time.gmtime(reference_time - age + 8 * 3600))
+                    output.writestr("header_info.log", f"报告时间：{stamp}\n")
+                output.writestr("ip_quality.log", f"IP质量体检报告：{address}\n自治系统号：AS64500\n")
+            (self.base / f"{token}.json").write_text(json.dumps({"success": True, "data": {
+                "asn": 64500, "result": base64.b64encode(archive.getvalue()).decode()}}))
+
+        settings = {"MOCK_NQ_IPINFO": str(info), "MOCK_NQ_RECORD_DIR": str(self.base),
+                    "MOCK_NQ_SELECTED_FILE": str(self.base / "selected.txt"),
+                    "MOCK_SQ_NQ_URL": f"https://nodequality.com/r/{inherited}",
+                    "SPEEDQUALITY_NQ_BINDING_ENABLED": "1", "SPEEDQUALITY_REPORT_RESPONSE_FILE": ""}
+        args = ["-p", "hb", "-v4", "--sq", "https://reports.example/r/AbCdEfGhIjKl",
+                "--nq", f"https://nodequality.com/r/{direct}"]
+        for direct_age, inherited_age, inherited_ip, winner in [
+            (3600, 60, "203.0.113.9", inherited),
+            (3600, 60, "198.51.100.1", direct),
+            (60, 60, "203.0.113.9", direct),
+            (None, 3600, "203.0.113.9", inherited),
+            (None, None, "203.0.113.9", direct),
+            (3600, -60, "203.0.113.9", inherited),
+        ]:
+            record(direct, direct_age)
+            record(inherited, inherited_age, inherited_ip)
+            result = self.run_client(args, settings)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertEqual((self.base / "selected.txt").read_text().strip(), f"https://nodequality.com/r/{winner}")
+            self.assertLess(result.stdout.index("逐份校验身份"), result.stdout.index("开始运行 SpeedQuality 测速"))
+            self.assert_clean()
+
     def test_download_failures_do_not_measure_and_remove_partial_files(self):
         for code, message in [(6, "域名解析失败"), (7, "无法连接"), (22, "HTTP 404"),
                               (23, "无法写入文件"), (28, "超时"), (35, "HTTPS")]:

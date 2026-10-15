@@ -958,7 +958,7 @@ test_mismatched_nodequality_falls_back() {
     bash "$RUNNER" -p hb --nq "$REPORT_URL" >"$output" 2>&1
 
   assert_contains "$output" 'NodeQuality 报告与当前服务器身份不匹配'
-  assert_contains "$output" '分享链接只包含本次测速结果'
+  assert_contains "$output" '已拒绝绑定该份 NodeQuality 报告'
   assert_contains "$output" "分享报告: $REPORT_PAGE"
   assert_not_contains "$output" '展示类型:'
   pass '服务器不一致时拒绝绑定并生成独立报告'
@@ -1155,7 +1155,7 @@ test_version_and_safe_cleanup() {
   printf 'keep\n' > "$temp_parent/user-library/package.dat"
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
-  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.5.2'
+  assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.6.0'
   assert_contains "$TEST_DIR/version.out" 'Probe v1.5.2'
 
   TMPDIR="$temp_parent" report_env \

@@ -1107,9 +1107,9 @@ test("structured results render as terminal text and feed private node health", 
   assert.doesNotMatch(desktop, /<table/);
   const mobile = page.match(/<table class="mobile-speed-table"[\s\S]*?<\/table>/)[0];
   assert.match(mobile, /aria-label="湖北 IPv4 单线程测速"/);
-  assert.match(mobile, /<th scope="row">电信<\/th><td><span style="color:#9eff6e">8ms<\/span><\/td><td><span style="color:rgb\(255,165,0\)">150\.50<\/span><\/td><td><span style="color:#9eff6e;font-weight:700">200 ✓<\/span>/);
-  assert.match(mobile, /<th scope="row">联通<\/th>(?:<td><span[^>]*>-<\/span><\/td>){3}/);
-  assert.match(mobile, /<th scope="row">移动<\/th><td><span[^>]*>769ms<\/span><\/td><td><span[^>]*>失败<\/span><\/td><td><span[^>]*>0\.04<\/span>/);
+  assert.match(mobile, /<th scope="row">电信<\/th><td><span style="color:#9eff6e">8ms<\/span><\/td><td><span style="color:rgb\(153,169,189\)">—<\/span><\/td><td><span style="color:rgb\(255,165,0\)">150\.50<\/span><\/td><td><span style="color:#9eff6e;font-weight:700">200 ✓<\/span>/);
+  assert.match(mobile, /<th scope="row">联通<\/th><td><span[^>]*>-<\/span><\/td><td><span[^>]*>—<\/span><\/td>(?:<td><span[^>]*>-<\/span><\/td>){2}/);
+  assert.match(mobile, /<th scope="row">移动<\/th><td><span[^>]*>769ms<\/span><\/td><td><span[^>]*>—<\/span><\/td><td><span[^>]*>失败<\/span><\/td><td><span[^>]*>0\.04<\/span>/);
   assert.equal(NODE_CORE.feedback.length, 1);
   assert.equal(NODE_CORE.feedback[0].measurements[0].lease_id, "lease_fixture_123");
   assert.equal(NODE_CORE.feedback[0].measurements[0].node_id, "0123456789abcdef0123456789abcdef");
