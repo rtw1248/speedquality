@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import worker from '../src/index.js';
-import { prepareNodeInfo, verifyReportNodeInfo, nodeDescription } from '../src/node-info.js';
+import { prepareNodeInfo, verifyReportNodeInfo, nodeDescription, enrichNodeNames } from '../src/node-info.js';
 import { sanitizeCoverage } from '../src/node-coverage.js';
 
 const env = { NODE_CORE_SECRET: 'metadata-test-secret-long-enough' };
@@ -67,4 +67,43 @@ test('coverage whitelists public fields and hides unavailable data without inven
   assert.equal(page.status,200); assert.match(page.headers.get('content-security-policy'),/connect-src 'self'/);
   assert.match(html,/教育网建设中，暂未开放公共测速/); assert.doesNotMatch(html,/SQ_MAP_PREVIEW|演示数据|demo-hb/);
   assert.equal((html.match(/class="province"/g)||[]).length,34);
+});
+
+test('friendly names require capability 2 and the signature binds the full name', async () => {
+  const value = lease(); value.targets[0].candidates[0].node_info.name = '武汉电信1号';
+  const legacy = structuredClone(value);
+  await prepareNodeInfo(legacy, request, env, 'session-a');
+  assert.equal(legacy.targets[0].candidates[0].node_info.name, undefined);
+  const modern = new Request(request.url, { headers: { 'X-SQ-Node-Info': '2' } });
+  await prepareNodeInfo(value, modern, env, 'session-a');
+  const reports = () => [{ region: { code: 'hb' }, family: 'v4', results: [{ carrier: 'ct', node_id: 'a'.repeat(32),
+    node_used: true, node_info: { ...value.targets[0].candidates[0].node_info } }] }];
+  const valid = reports(); await verifyReportNodeInfo(valid, env, 'session-a');
+  assert.equal(nodeDescription(valid[0].results[0]), '武汉电信1号 · 第三方');
+  for (const mutate of [r => r[0].results[0].node_info.name = '武汉电信2号',
+    r => delete r[0].results[0].node_info.name, r => r[0].family = 'v6']) {
+    const tampered = reports(); mutate(tampered); await verifyReportNodeInfo(tampered, env, 'session-a');
+    assert.equal(tampered[0].results[0].node_info, undefined);
+  }
+});
+
+test('historical enrichment only accepts full ID, region, family and carrier registry matches', async () => {
+  const reports = [{ region: { code: 'hb' }, family: 'v4', results: [
+    { carrier: 'ct', node_id: 'a'.repeat(32), single: { download_mbps: 100 } },
+    { carrier: 'ct', node_id: 'a'.repeat(12) + 'b'.repeat(20), node_used: true },
+    { carrier: 'ct', node_id: 'b'.repeat(32), node_used: false },
+  ] }];
+  const core = { ...env, NODE_CORE: { fetch: async req => {
+    const input = await req.json(); assert.equal(input.nodes.length, 2);
+    assert.equal(req.headers.get('x-node-core-secret'), env.NODE_CORE_SECRET);
+    assert.doesNotMatch(JSON.stringify(input), /ip|address|client/);
+    return Response.json({ names: [{ ...input.nodes[0], name: '武汉电信1号', city: '武汉', source: 'third_party' },
+      { ...input.nodes[1], family: 'v6', name: '武汉电信2号', city: '武汉', source: 'third_party' }] });
+  } } };
+  await enrichNodeNames(reports, core);
+  assert.equal(nodeDescription(reports[0].results[0]), '武汉电信1号 · 第三方');
+  assert.equal(reports[0].results[1].node_info, undefined);
+  assert.equal(reports[0].results[2].node_info, undefined);
+  await enrichNodeNames(reports, { NODE_CORE: { fetch() { throw new Error('offline'); } } });
+  assert.equal(nodeDescription(reports[0].results[0]), '武汉电信1号 · 第三方');
 });

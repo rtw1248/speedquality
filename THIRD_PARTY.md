@@ -26,6 +26,8 @@ external service.
 
 - `golang.org/x/text v0.20.0` is compiled into `sqprobe`; its BSD license is reproduced in
   `THIRD_PARTY_LICENSES/golang.org_x_text_LICENSE`.
+- `pinyin-pro@3.29.5` (MIT) normalizes Chinese city spellings on the platform. Its license is
+  reproduced in `THIRD_PARTY_LICENSES/pinyin-pro_LICENSE`; it is not compiled into the Go clients.
 - Cloudflare Wrangler is a development and deployment dependency. It is not bundled into the
   released `sqprobe` or `sq-node` binaries. Its package metadata and license remain available from
   the installed npm package and the Cloudflare Workers SDK repository.

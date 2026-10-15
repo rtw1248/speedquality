@@ -47,6 +47,7 @@ type TargetGroup struct {
 }
 
 type NodeInfo struct {
+	Name       string `json:"name,omitempty"`
 	City       string `json:"city"`
 	CityStatus string `json:"city_status"`
 	Source     string `json:"source"`
@@ -170,6 +171,14 @@ func validCarrier(value string) bool {
 
 func (candidate Candidate) validate(family string) error {
 	if info := candidate.NodeInfo; info != nil {
+		if utf8.RuneCountInString(info.Name) > 80 {
+			return errors.New("invalid node name")
+		}
+		for _, character := range info.Name {
+			if !unicode.IsLetter(character) && !unicode.IsMark(character) && !unicode.IsDigit(character) && !strings.ContainsRune(" .·'-", character) {
+				return errors.New("invalid node name")
+			}
+		}
 		if utf8.RuneCountInString(info.City) > 48 || (info.CityStatus != "verified" && info.CityStatus != "reported" && info.CityStatus != "unknown" && info.CityStatus != "conflict") ||
 			(info.Source != "third_party" && info.Source != "community" && info.Source != "static") {
 			return errors.New("invalid node information")

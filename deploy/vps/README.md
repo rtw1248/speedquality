@@ -38,6 +38,9 @@ Cloudflare 只承担 DNS、HTTPS 和缓存，不再为每次 API 请求执行 Wo
 | 配置、密钥、SQLite、NQ 快照 | VPS 的 `state/` | 禁止提交 Git |
 | 域名、证书、DNS 代理 | Cloudflare + Nginx | 密钥只留服务器 |
 
+平台镜像包含Core城市名称归一化所需的固定版本依赖；更新此功能时需重新构建镜像。
+Core的节点名称登记随`core.sqlite`整库备份保存，清理缓存时不能删除或重建该登记。
+
 推荐目录：
 
 ```text

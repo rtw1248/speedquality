@@ -1,4 +1,4 @@
-import { normalizeNodeInfo, prepareNodeInfo, verifyReportNodeInfo, nodeDescription } from "./node-info.js";
+import { normalizeNodeInfo, prepareNodeInfo, verifyReportNodeInfo, nodeDescription, enrichNodeNames } from "./node-info.js";
 import { logEvent, requestID, routeLabel } from "./observability.js";
 import { reportImageResponse } from "./report-image-cache.js";
 import { prefersRunPage, renderRunPage } from "./run-page.js";
@@ -930,7 +930,7 @@ async function callCommunityCore(env, pathname, input, options = {}) {
     "content-type": "application/json",
     "x-node-core-secret": String(env.NODE_CORE_SECRET || ""),
   };
-  if (pathname === "/task") headers["x-sq-node-info"] = "1";
+  if (pathname === "/task") headers["x-sq-node-info"] = "2";
   if (options.clientIP) headers["x-community-client-ip"] = options.clientIP;
   if (options.region) headers["x-community-region"] = options.region;
   if (options.carrier) headers["x-community-carrier"] = options.carrier;
@@ -1393,7 +1393,7 @@ async function requestNodeLease(request, env) {
         headers: {
           "content-type": "application/json",
           "x-node-core-secret": String(env.NODE_CORE_SECRET || ""),
-          "x-sq-node-info": "1",
+          "x-sq-node-info": "2",
           "x-request-id": currentRequestID,
         },
         body: JSON.stringify(input),
@@ -2129,7 +2129,8 @@ export function reportPreviewModel(report) {
       return {
         label: `${CARRIER_NAMES[result.carrier]} · ${entry.family === "v4" ? "IPv4" : "IPv6"}`,
         node: nodeDescription(result) ? {
-          id: result.node_id.slice(0, 12),
+          id: result.node_info?.name ? "" : result.node_id.slice(0, 12),
+          name: result.node_info?.name || "",
           city: result.node_info?.city_status === "conflict" ? "城市待核实" : result.node_info?.city || "",
           source: { third_party: "第三方", community: "自建", static: "静态" }[result.node_info?.source] || "",
         } : null,
@@ -3046,12 +3047,15 @@ async function showReport(request, env, id) {
     const url = new URL(request.url);
     const requestedTab = url.searchParams.get("tab") || "";
     const tab = /^[a-z0-9-]{1,35}$/.test(requestedTab) ? requestedTab : "";
+    const speedReports = storedSpeedReports(report.speed_data);
     const [snapshot, usage] = await Promise.all([
       report.nq_url && request.method !== "HEAD"
         ? loadNodeQualitySnapshot(env, id)
         : null,
       readUsageCounters(env, now),
+      enrichNodeNames(speedReports, env),
     ]);
+    report.speed_data = JSON.stringify(speedReports);
     const scriptNonce = `${randomId()}${randomId()}`;
     const page = renderReport(report, {
       tab,
@@ -3353,7 +3357,11 @@ async function routeRequest(request, env, context) {
   const previewMatch = url.pathname.match(/^\/r\/([A-Za-z0-9_-]{12})\/preview-v1\.png$/);
   if (previewMatch) {
     if (!["GET", "HEAD"].includes(request.method)) return textResponse("Method Not Allowed\n", 405, { allow: "GET, HEAD" });
-    return reportImageResponse(request, env, previewMatch[1], reportPreviewModel, context);
+    return reportImageResponse(request, env, previewMatch[1], async report => {
+      const reports = storedSpeedReports(report.speed_data);
+      await enrichNodeNames(reports, env);
+      return reportPreviewModel({ ...report, speed_data: JSON.stringify(reports) });
+    }, context);
   }
   const reportMatch = url.pathname.match(/^\/r\/([^/]+)$/);
   if (reportMatch) {

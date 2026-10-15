@@ -47,7 +47,7 @@ export async function reportImageResponse(request, env, id, makeModel, context) 
       const work = (async () => {
         const report = await env.DB.prepare("SELECT * FROM reports WHERE id = ? AND expires_at > ?").bind(id, now).first();
         if (!report) return null;
-        const png = await renderPreviewPNG(makeModel(report));
+        const png = await renderPreviewPNG(await makeModel(report));
         const completedAt = Math.floor(Date.now() / 1000);
         const until = Math.min(report.expires_at, now + 3600);
         if (until <= completedAt) return null;

@@ -13,6 +13,7 @@
     "admin": "node admin.mjs"
   },
   "dependencies": {
+    "pinyin-pro": "3.29.5",
     "redis": "6.3.0"
   }
 }

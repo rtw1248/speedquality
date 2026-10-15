@@ -94,7 +94,7 @@ func (c *httpTaskControl) Call(ctx context.Context, task *scheduledTask, action 
 		return taskReply{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-SQ-Node-Info", "1")
+	request.Header.Set("X-SQ-Node-Info", "2")
 	request.Header.Set("Authorization", "Bearer "+c.tokens[task.Family])
 	response, err := c.clients[task.Family].Do(request)
 	if err != nil {

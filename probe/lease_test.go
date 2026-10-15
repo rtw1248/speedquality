@@ -126,3 +126,20 @@ func TestEducationLeaseAndNodeInfoValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestFriendlyNodeNameAndLegacyDescription(t *testing.T) {
+	result := MeasurementResult{NodeUsed: true, NodeID: strings.Repeat("a", 32), NodeInfo: &NodeInfo{
+		City: "武汉", CityStatus: "verified", Source: "third_party", Name: "武汉电信1号",
+	}}
+	if got := reportNodeDescription(result); got != "武汉电信1号 · 第三方" {
+		t.Fatalf("friendly name: %q", got)
+	}
+	result.NodeInfo.Name = ""
+	if got := reportNodeDescription(result); got != "武汉 · aaaaaaaaaaaa · 第三方" {
+		t.Fatalf("legacy description: %q", got)
+	}
+	result.NodeUsed = false
+	if got := reportNodeDescription(result); got != "" {
+		t.Fatalf("unused node: %q", got)
+	}
+}

@@ -110,10 +110,14 @@ export const nodeMapClient = `(() => {
         for (const node of nodes) {
           const identity = element('div','node-identifiers');
           const city = cityLabel(node);
-          if (city) identity.append(element('span','node-city',city));
-          const code = element('code','',node.id.slice(0,12));
+          if (node.name || city) identity.append(element('span','node-city',node.name || city));
+          const code = element('code','',node.name ? node.id : node.id.slice(0,12));
           code.title = \`完整编号：\${node.id}\`;
-          identity.append(code,element('small','',\`\${node.source==='community'?'自建':'第三方'} · \${nodeStatusLabel(node)} · 最近成功：\${dateLabel(node.last_success_at)}\`));
+          if (node.name) {
+            const raw = element('details','node-raw-id');
+            raw.append(element('summary','','查看编号'),code); identity.append(raw);
+          } else identity.append(code);
+          identity.append(element('small','',\`\${node.source==='community'?'自建':'第三方'} · \${nodeStatusLabel(node)} · 最近成功：\${dateLabel(node.last_success_at)}\`));
           details.append(identity);
         }
         row.append(details);

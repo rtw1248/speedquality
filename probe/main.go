@@ -227,10 +227,14 @@ func reportNodeDescription(result MeasurementResult) string {
 		city = "城市待核实"
 	}
 	parts := []string{}
-	if city != "" {
-		parts = append(parts, city)
+	if info.Name != "" {
+		parts = append(parts, info.Name)
+	} else {
+		if city != "" {
+			parts = append(parts, city)
+		}
+		parts = append(parts, result.NodeID[:12])
 	}
-	parts = append(parts, result.NodeID[:12])
 	if label, ok := map[string]string{"third_party": "第三方", "community": "自建", "static": "静态节点"}[info.Source]; ok {
 		parts = append(parts, label)
 	}
