@@ -81,6 +81,17 @@ sudo journalctl -u speedquality-node.service -o cat -n 200
 生产环境可把 `LOG_LEVEL` 改为 `warn` 降低日志量；调查问题时改回 `info`。`off` 会关闭应用
 日志，不影响 Cloudflare 自身的请求指标。
 
+## 程序下载排障
+
+`/bin/:version/:asset` 只在边缘缓存成功取得的完整发布文件。缓存未命中时，回源请求使用
+`cache: no-store`，避免复用 GitHub 已过期的签名跳转或缓存中的错误响应；失败和部分响应
+不会写入文件缓存。响应头 `X-SQ-Release-Cache` 为 `HIT`、`MISS` 或 `BYPASS`。
+
+下载返回 502 时，在公开 Worker 日志中按 `request_id` 查找 `release.fetch_failed`，查看
+`upstream_status` 或 `error_type`。缓存读写异常对应 `release.cache_read_failed` 和
+`release.cache_write_failed`，不会阻止成功回源的文件返回给用户。日志只记录版本、文件名和
+错误分类，不记录 GitHub 签名下载地址。
+
 ## 客户端诊断
 
 普通测速不在用户服务器留下日志文件。需要复现客户端选点或激活问题时，可显式指定一个由

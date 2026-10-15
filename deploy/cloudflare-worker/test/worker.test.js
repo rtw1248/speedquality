@@ -1320,6 +1320,124 @@ test("binary endpoint proxies only configured release assets", async () => {
   }
 });
 
+function releaseCacheFixture() {
+  const entries = new Map();
+  return {
+    entries,
+    async match(request) {
+      const stored = entries.get(request.url);
+      return stored && new Response(stored.body, { status: stored.status, headers: stored.headers });
+    },
+    async put(request, response) {
+      // Like the edge cache, commit only after reading the complete response.
+      const body = await response.arrayBuffer();
+      entries.set(request.url, { body, status: response.status, headers: [...response.headers] });
+    },
+  };
+}
+
+test("binary endpoint refreshes expired upstream downloads and reuses complete files for GET and HEAD", async () => {
+  const cache = releaseCacheFixture();
+  const pending = [];
+  const context = { waitUntil(promise) { pending.push(promise); } };
+  let fetches = 0;
+  const env = {
+    GITHUB_OWNER: "owner", GITHUB_REPO: "speedquality", PROBE_VERSION: "v1.0.0",
+    RELEASE_CACHE: cache,
+    ASSET_SOURCE: { async fetch(url, options) {
+      fetches++;
+      // The intermediary has an expired signed redirect cached for this URL.
+      if (options.cache !== "no-store") return new Response("Expired signature", { status: 403 });
+      assert.equal(options.redirect, "follow");
+      assert.equal(options.cf, undefined);
+      return new Response(`complete file: ${new URL(url).pathname.split("/").pop()}`);
+    } },
+  };
+  const base = "https://rtw.example/bin/v1.0.0/";
+  const first = await worker.fetch(new Request(base + "sqprobe-linux-amd64?download=1"), env, context);
+  assert.equal(first.status, 200);
+  assert.equal(await first.text(), "complete file: sqprobe-linux-amd64");
+  await Promise.all(pending);
+  assert.equal(cache.entries.size, 1);
+
+  const repeated = await worker.fetch(new Request(base + "sqprobe-linux-amd64?download=2"), env, context);
+  assert.equal(await repeated.text(), "complete file: sqprobe-linux-amd64");
+  const head = await worker.fetch(new Request(base + "sqprobe-linux-amd64", { method: "HEAD" }), env, context);
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), "");
+  assert.equal(head.headers.get("content-type"), "application/octet-stream");
+  assert.equal(fetches, 1);
+
+  // A cold HEAD request must not populate an empty file for a subsequent GET.
+  const coldHead = await worker.fetch(new Request(base + "sqprobe-linux-arm64", { method: "HEAD" }), env, context);
+  assert.equal(await coldHead.text(), "");
+  await Promise.all(pending);
+  const arm = await worker.fetch(new Request(base + "sqprobe-linux-arm64"), env, context);
+  assert.equal(await arm.text(), "complete file: sqprobe-linux-arm64");
+  assert.equal(fetches, 2);
+});
+
+test("binary endpoint never caches upstream failures or partial responses", async () => {
+  for (const status of [206, 302, 403, 404, 429, 500, 502, 503]) {
+    const cache = releaseCacheFixture();
+    let fetches = 0;
+    const env = {
+      GITHUB_OWNER: "owner", GITHUB_REPO: "speedquality", PROBE_VERSION: "v1.0.0",
+      RELEASE_CACHE: cache,
+      ASSET_SOURCE: { async fetch() {
+        return ++fetches === 1 ? new Response("upstream failure", { status }) : new Response("complete file");
+      } },
+    };
+    const request = () => new Request("https://rtw.example/bin/v1.0.0/sqprobe-linux-amd64");
+    const failed = await worker.fetch(request(), env);
+    assert.equal(failed.status, 502, `upstream status ${status}`);
+    assert.equal(failed.headers.get("cache-control"), "no-store");
+    assert.equal(cache.entries.size, 0);
+    const recovered = await worker.fetch(request(), env);
+    assert.equal(recovered.status, 200);
+    assert.equal(await recovered.text(), "complete file");
+    assert.equal(cache.entries.size, 1);
+    assert.equal(fetches, 2);
+  }
+});
+
+test("binary endpoint tolerates cache outages without losing the downloaded body", async () => {
+  const env = {
+    GITHUB_OWNER: "owner", GITHUB_REPO: "speedquality", PROBE_VERSION: "v1.0.0",
+    RELEASE_CACHE: {
+      async match() { throw new Error("cache read unavailable"); },
+      async put() { throw new Error("cache write unavailable"); },
+    },
+    ASSET_SOURCE: { async fetch() { return new Response("complete file"); } },
+  };
+  const response = await worker.fetch(new Request("https://rtw.example/bin/v1.0.0/sqprobe-linux-amd64"), env);
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "complete file");
+});
+
+test("binary endpoint does not retain interrupted downloads in the edge cache", async () => {
+  const cache = releaseCacheFixture();
+  let fetches = 0;
+  const env = {
+    GITHUB_OWNER: "owner", GITHUB_REPO: "speedquality", PROBE_VERSION: "v1.0.0",
+    RELEASE_CACHE: cache,
+    ASSET_SOURCE: { async fetch() {
+      if (++fetches > 1) return new Response("complete file");
+      return new Response(new ReadableStream({ start(controller) {
+        controller.enqueue(new TextEncoder().encode("partial file"));
+        controller.error(new Error("upstream interrupted"));
+      } }));
+    } },
+  };
+  const request = () => new Request("https://rtw.example/bin/v1.0.0/sqprobe-linux-amd64");
+  const broken = await worker.fetch(request(), env);
+  await assert.rejects(broken.text(), /upstream interrupted/);
+  assert.equal(cache.entries.size, 0);
+  const recovered = await worker.fetch(request(), env);
+  assert.equal(await recovered.text(), "complete file");
+  assert.equal(cache.entries.size, 1);
+});
+
 test("report copy formats support plain text, NodeSeek, and general Markdown", () => {
   const report = {
     id: "CopyDemo1234",

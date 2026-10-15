@@ -3143,25 +3143,48 @@ function serveNodeInstaller(request, env) {
   return serveRepositoryScript(request, env, "install-node.sh", "sq-node installer");
 }
 
-async function serveProbeAsset(request, env, version, asset) {
+async function serveProbeAsset(request, env, version, asset, context) {
   const upstreamUrl = resolveProbeAsset(env, version, asset);
   if (!upstreamUrl) {
     return textResponse("Probe release is not configured\n", 503, { "cache-control": "no-store" });
+  }
+  const cache = env.RELEASE_CACHE || globalThis.caches?.default;
+  const cacheUrl = new URL(request.url);
+  // Separate completed files from the former fetch cache, including any stale
+  // GitHub redirects. Arbitrary client query strings must not fragment it.
+  cacheUrl.search = "?sq-release-cache=2";
+  const cacheKey = new Request(cacheUrl.href);
+  const fields = { request_id: requestID(request), version, asset };
+  try {
+    const cached = await cache?.match(cacheKey);
+    if (cached?.status === 200) {
+      const response = new Response(request.method === "HEAD" ? null : cached.body, cached);
+      response.headers.set("x-sq-release-cache", "HIT");
+      return response;
+    }
+  } catch {
+    logEvent(env, "warn", "release.cache_read_failed", fields);
   }
   let upstream;
   try {
     const fetchAsset = env.ASSET_SOURCE ? env.ASSET_SOURCE.fetch.bind(env.ASSET_SOURCE) : fetch;
     upstream = await fetchAsset(upstreamUrl, {
       headers: { accept: "application/octet-stream", "user-agent": "SpeedQuality-Release-Proxy/1.0" },
-      cf: { cacheEverything: true, cacheTtl: 86400 },
+      // GitHub redirects to expiring signed URLs. Do not reuse cached redirects
+      // or errors; the Cache API below stores only a complete successful file.
+      redirect: "follow",
+      cache: "no-store",
     });
-  } catch {
+  } catch (error) {
+    logEvent(env, "warn", "release.fetch_failed", { ...fields, error_type: error?.name || "Error" });
     return textResponse("Unable to fetch probe release\n", 502, { "cache-control": "no-store" });
   }
-  if (!upstream.ok) {
+  if (upstream.status !== 200) {
+    logEvent(env, "warn", "release.fetch_failed", { ...fields, upstream_status: upstream.status });
+    await upstream.body?.cancel().catch(() => {});
     return textResponse("Unable to fetch probe release\n", 502, { "cache-control": "no-store" });
   }
-  return new Response(request.method === "HEAD" ? null : upstream.body, {
+  const response = new Response(upstream.body, {
     status: 200,
     headers: commonHeaders({
       "content-type": asset.endsWith(".txt") || asset.endsWith(".json") || asset.endsWith(".sig")
@@ -3169,8 +3192,17 @@ async function serveProbeAsset(request, env, version, asset) {
         : "application/octet-stream",
       "cache-control": "public, max-age=3600, s-maxage=86400, immutable",
       "content-disposition": `attachment; filename="${asset}"`,
+      "x-sq-release-cache": cache ? "MISS" : "BYPASS",
     }),
   });
+  if (cache) {
+    const copy = response.clone();
+    const save = Promise.resolve().then(() => cache.put(cacheKey, copy)).catch(() => {
+      logEvent(env, "warn", "release.cache_write_failed", fields);
+    });
+    if (context?.waitUntil) context.waitUntil(save); else await save;
+  }
+  return request.method === "HEAD" ? new Response(null, response) : response;
 }
 
 async function routeRequest(request, env, context) {
@@ -3274,7 +3306,7 @@ async function routeRequest(request, env, context) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return textResponse("Method Not Allowed\n", 405, { allow: "GET, HEAD" });
     }
-    return serveProbeAsset(request, env, probeAssetMatch[1], probeAssetMatch[2]);
+    return serveProbeAsset(request, env, probeAssetMatch[1], probeAssetMatch[2], context);
   }
 
   if (url.pathname === "/api/results") {
