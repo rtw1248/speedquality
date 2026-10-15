@@ -87,6 +87,39 @@ func TestPrintReportKeepsPartialMeasurementsVisible(t *testing.T) {
 	}
 }
 
+func TestReportRetransmissionColorsWorkWithoutTrueColor(t *testing.T) {
+	for _, sample := range []struct {
+		name  string
+		stats *retransmissionStats
+		text  string
+		color string
+	}{
+		{"missing", nil, "—", "\x1b[90m"},
+		{"zero", &retransmissionStats{1_000_000, 0}, "0.00%", green},
+		{"tiny", &retransmissionStats{1_000_000, 1}, "<0.01%", green},
+		{"green", &retransmissionStats{1_000_000, 9_900}, "0.99%", green},
+		{"warning boundary", &retransmissionStats{1_000_000, 10_000}, "1.00%", yellow},
+		{"reported regression", &retransmissionStats{1_000_000, 31_100}, "3.11%", yellow},
+		{"warning", &retransmissionStats{1_000_000, 49_900}, "4.99%", yellow},
+		{"red boundary", &retransmissionStats{1_000_000, 50_000}, "5.00%", red},
+	} {
+		t.Run(sample.name, func(t *testing.T) {
+			report := Report{Region: Region{Code: "hb", Name: "湖北"}, Family: "v4", TargetMbps: 200,
+				Results: []MeasurementResult{{Carrier: "ct", Status: "ok", Latency: 8,
+					Single: &ModeResult{UploadMbps: 100, DownloadMbps: 100, UploadRetransmission: sample.stats}}}}
+			var output bytes.Buffer
+			printReport(&output, report)
+			text := output.String()
+			if !strings.Contains(text, sample.color+padDisplay(sample.text, 10, "right")+reset) {
+				t.Fatalf("retransmission cell lacks the compatible severity color: %q", text)
+			}
+			if strings.Contains(text, "\x1b[38;2;") {
+				t.Fatalf("terminal report requires unsupported true color: %q", text)
+			}
+		})
+	}
+}
+
 func TestDiagnosticErrorDoesNotExposeNodeURL(t *testing.T) {
 	err := &url.Error{
 		Op:  "Get",

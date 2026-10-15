@@ -2,9 +2,9 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.6.0"
+readonly SPEEDQUALITY_VERSION="1.6.1"
 # Keep direct GitHub runs in sync with the signed release and deployed platform.
-readonly FALLBACK_PROBE_VERSION="v1.6.0"
+readonly FALLBACK_PROBE_VERSION="v1.6.1"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"

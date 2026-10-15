@@ -39,7 +39,7 @@ func displayRetransmission(mode *ModeResult) string {
 
 func retransmissionColor(mode *ModeResult) string {
 	if mode == nil || mode.UploadRetransmission == nil || mode.UploadRetransmission.SentBytes == 0 {
-		return "\x1b[38;2;153;169;189m"
+		return "\x1b[90m"
 	}
 	stats := mode.UploadRetransmission
 	percent := float64(stats.RetransmittedBytes) / float64(stats.SentBytes) * 100
@@ -47,7 +47,9 @@ func retransmissionColor(mode *ModeResult) string {
 		return green
 	}
 	if percent < 5 {
-		return "\x1b[38;2;255;165;0m"
+		// Match the existing speed/latency warning color on SSH clients that
+		// support basic ANSI colors but not 24-bit RGB escape sequences.
+		return yellow
 	}
 	return red
 }
