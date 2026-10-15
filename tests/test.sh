@@ -1156,7 +1156,7 @@ test_version_and_safe_cleanup() {
 
   bash "$RUNNER" --version >"$TEST_DIR/version.out" 2>&1
   assert_contains "$TEST_DIR/version.out" 'SpeedQuality 1.6.0'
-  assert_contains "$TEST_DIR/version.out" 'Probe v1.5.2'
+  assert_contains "$TEST_DIR/version.out" 'Probe v1.6.0'
 
   TMPDIR="$temp_parent" report_env \
     bash "$RUNNER" -p hb >"$TEST_DIR/cleanup.out" 2>&1
