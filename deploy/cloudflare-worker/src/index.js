@@ -2080,6 +2080,30 @@ function padDisplay(value, width, align = "left") {
   return align === "right" ? `${" ".repeat(padding)}${text}` : `${text}${" ".repeat(padding)}`;
 }
 
+// Forum ANSI blocks may wrap or clip at their container edge. Insert line
+// breaks before coloring prose, so escape sequences and ASCII words stay whole.
+function wrapDisplayText(value, width = 80) {
+  return String(value).split("\n").map((paragraph) => {
+    const lines = [];
+    let line = "";
+    let used = 0;
+    const flush = () => { lines.push(line.trimEnd()); line = ""; used = 0; };
+    for (const token of paragraph.match(/[!-~]+|[^\S\n]+|./gu) || []) {
+      const size = displayWidth(token);
+      if (used && used + size > width) flush();
+      if (!used && /^\s+$/.test(token)) continue;
+      for (const character of token) {
+        const size = displayWidth(character);
+        if (used + size > width) flush();
+        line += character;
+        used += size;
+      }
+    }
+    lines.push(line.trimEnd());
+    return lines.join("\n");
+  }).join("\n");
+}
+
 function centerIndent(value, width = 80) {
   const text = String(value ?? "");
   const padding = Math.max(0, width - displayWidth(text));
@@ -2191,12 +2215,13 @@ function groupSpeedReports(value) {
   return groups;
 }
 
-function joinSpeedColumns(columns) {
-  return columns.slice(0, 5).join("  ") + (columns.length > 5 ? `      ${columns[5]}` : "");
+function joinSpeedColumns(columns, compact = false) {
+  return columns.slice(0, 5).join("  ") + (columns.length > 5 ? `${compact ? "    " : "      "}${columns[5]}` : "");
 }
 
 function renderStructuredSpeedText(value, options = {}) {
   const colored = options.colored === true;
+  const compact = options.compact === true;
   return groupSpeedReports(value).map((group) => {
     const lines = [];
     lines.push(ansiText(group.name, "1;96", colored));
@@ -2211,29 +2236,49 @@ function renderStructuredSpeedText(value, options = {}) {
       const targetMbps = TARGET_SPEEDS.has(Number(report.target_mbps))
         ? Number(report.target_mbps)
         : null;
+      const values = rows.map((result) => speedRowValues(result, targetMbps));
+      const retransmissions = rows.map((result) => retransmissionText(result.single?.upload_retransmission));
+      const widths = compact ? [4, 6, 6, 10, 10] : [8, 10, 10, 18, 18];
+      if (compact) {
+        for (const [index, row] of values.entries()) {
+          [row.carrier, row.latency, retransmissions[index], row.uploadValue, row.downloadValue]
+            .forEach((value, column) => { widths[column] = Math.max(widths[column], displayWidth(value)); });
+        }
+      }
+      const nodeStart = widths.reduce((sum, width) => sum + width, 0) + 8 + 4;
+      // Unusually long names keep an exact reference below the table instead
+      // of being truncated or pushing the speed row past the forum width.
+      const nodeReferences = compact && nodes.some((node) => nodeStart + displayWidth(node) > 80);
+      const tableNodes = nodeReferences ? nodes.map((node, index) => node ? `[${index + 1}]` : "") : nodes;
       const headings = [
-        ansiText(padDisplay(family, 8, "right"), "1;96", colored),
-        ansiText(padDisplay("延迟", 10, "right"), "1;96", colored),
-        ansiText(padDisplay("重传率", 10, "right"), "1;96", colored),
-        ansiText(padDisplay("单线程上传", 18, "right"), "1;96", colored),
-        ansiText(padDisplay("单线程下载", 18, "right"), "1;96", colored),
+        ansiText(padDisplay(family, widths[0], "right"), "1;96", colored),
+        ansiText(padDisplay("延迟", widths[1], "right"), "1;96", colored),
+        ansiText(padDisplay("重传率", widths[2], "right"), "1;96", colored),
+        ansiText(padDisplay("单线程上传", widths[3], "right"), "1;96", colored),
+        ansiText(padDisplay("单线程下载", widths[4], "right"), "1;96", colored),
       ];
       if (hasNodes) {
-        const nodeWidth = Math.max(displayWidth("节点"), ...nodes.map((node) => displayWidth(node)));
+        const nodeWidth = Math.max(displayWidth("节点"), ...tableNodes.map((node) => displayWidth(node)));
         headings.push(ansiText(padDisplay("节点", nodeWidth, "center"), "1;96", colored));
       }
-      lines.push(joinSpeedColumns(headings));
+      lines.push(joinSpeedColumns(headings, compact));
       for (const [index, result] of rows.entries()) {
-        const { carrier, latency, uploadMbps, downloadMbps, uploadValue, downloadValue } = speedRowValues(result, targetMbps);
+        const { carrier, latency, uploadMbps, downloadMbps, uploadValue, downloadValue } = values[index];
         const columns = [
-          ansiText(padDisplay(carrier, 8, "right"), "36", colored),
-          ansiText(padDisplay(latency, 10, "right"), latencyAnsiCode(result.latency_ms), colored),
-          ansiText(padDisplay(retransmissionText(result.single?.upload_retransmission), 10, "right"), retransmissionAnsiCode(result.single?.upload_retransmission), colored),
-          ansiText(padDisplay(uploadValue, 18, "right"), speedAnsiCode(uploadMbps, targetMbps), colored),
-          ansiText(padDisplay(downloadValue, 18, "right"), speedAnsiCode(downloadMbps, targetMbps), colored),
+          ansiText(padDisplay(carrier, widths[0], "right"), "36", colored),
+          ansiText(padDisplay(latency, widths[1], "right"), latencyAnsiCode(result.latency_ms), colored),
+          ansiText(padDisplay(retransmissions[index], widths[2], "right"), retransmissionAnsiCode(result.single?.upload_retransmission), colored),
+          ansiText(padDisplay(uploadValue, widths[3], "right"), speedAnsiCode(uploadMbps, targetMbps), colored),
+          ansiText(padDisplay(downloadValue, widths[4], "right"), speedAnsiCode(downloadMbps, targetMbps), colored),
         ];
-        if (hasNodes) columns.push(ansiText(nodes[index], "90", colored));
-        lines.push(joinSpeedColumns(columns));
+        if (hasNodes) columns.push(ansiText(tableNodes[index], "90", colored));
+        lines.push(joinSpeedColumns(columns, compact));
+      }
+      if (nodeReferences) {
+        lines.push("");
+        nodes.forEach((node, index) => {
+          if (node) lines.push(ansiText(wrapDisplayText(`[${index + 1}] ${node}`), "90", colored));
+        });
       }
       if (rows.some((result) => ["节点繁忙", "同一来源已有测速任务"].includes(result.error))) {
         lines.push(ansiText("  部分项目因节点繁忙或同一来源已有任务而跳过（-）。", "33", colored));
@@ -2486,7 +2531,11 @@ function speedCopyMaterial(report, options = {}) {
     ? ansiText(verificationText, { ok: "92", warning: "33", danger: "1;91" }[verification.level], true) : "";
   const speedPlainMaterial = [headerText, verificationText, speedText, trafficText].filter(Boolean).join("\n\n");
   const speedAnsiMaterial = [headerAnsi, verificationAnsi, speedAnsi, trafficAnsiText].filter(Boolean).join("\n\n");
-  return { speedPlainMaterial, speedAnsiMaterial, verificationText };
+  const forumSpeedAnsi = renderStructuredSpeedText(report.speed_data, { colored: true, compact: true }) || speedAnsi;
+  const forumVerification = verification
+    ? ansiText(wrapDisplayText(verificationText), { ok: "92", warning: "33", danger: "1;91" }[verification.level], true) : "";
+  const forumAnsiMaterial = [headerAnsi, forumVerification, forumSpeedAnsi, trafficAnsiText].filter(Boolean).join("\n\n");
+  return { speedPlainMaterial, speedAnsiMaterial, forumAnsiMaterial, verificationText };
 }
 
 export function formatReportCopies(report, options = {}) {
@@ -2518,7 +2567,7 @@ export function formatReportCopies(report, options = {}) {
     }
   }
   for (const entry of materials) {
-    nodeSeek.push(`::: tab-item ${entry.title}\n${markdownCodeBlock(entry.speedAnsiMaterial, "ansi")}\n:::`);
+    nodeSeek.push(`::: tab-item ${entry.title}\n${markdownCodeBlock(entry.forumAnsiMaterial, "ansi")}\n:::`);
   }
   nodeSeek.push("::::");
   if (links) nodeSeek.push(links);

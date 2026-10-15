@@ -1575,7 +1575,7 @@ test("report exports retain identity and time verification in every format", () 
       for (const [format, copy] of Object.entries(copies)) {
         assert.equal(copy.split(`关联校验：${entry.heading}`).length - 1, 1, `${entry.status}: ${format}`);
         for (const detail of entry.details) {
-          assert.ok(copy.includes(detail), `${entry.status}: ${format}: ${detail}`);
+          assert.ok(copy.replace(/\s/g, "").includes(detail.replace(/\s/g, "")), `${entry.status}: ${format}: ${detail}`);
           assert.ok(visibleNotice.includes(detail), `${entry.status}: webpage: ${detail}`);
         }
         if (entry.status !== "verified") assert.doesNotMatch(copy, /身份与时间均已校验/);

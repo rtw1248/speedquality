@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import worker, { formatReportCopies, renderReport, validateSpeedData } from "../src/index.js";
 import { sortSQReports, linkedNQContext } from "../src/report-link.js";
 import { retransmissionText } from "../src/retransmission.js";
@@ -65,6 +68,65 @@ test("SQ identity is private, preflight binds one original report, and a pair ca
   const page = await (await worker.fetch(new Request(`${combined.url}?tab=sq`), env)).text();
   assert.match(page, /class="sq-time-tabs"/);
   assert.doesNotMatch(page, new RegExp(JSON.parse(stored.source_identity_hashes)[0]));
+});
+
+test("rejected NQ candidates still save standalone and paired SQ reports", async (t) => {
+  const env = environment(t);
+  const original = await create(env);
+  const { token } = await (await preflight(env, original.url)).json();
+  for (const status of ["mismatch", "unverified"]) {
+    for (const paired of [false, true]) {
+      const result = await create(env, {
+        bind_status: status,
+        nq_url: "https://nodequality.com/r/RejectedCandidate",
+        ...(paired ? { sq_preflight_token: token } : {}),
+      });
+      const stored = await read(env, result.id);
+      assert.equal(stored.bind_status, status);
+      assert.equal(stored.nq_url, "");
+      assert.equal(stored.sq_source_id, paired ? original.id : "");
+      const page = await (await worker.fetch(new Request(result.url), env)).text();
+      assert.match(page, status === "mismatch" ? /服务器身份校验未通过/ : /NodeQuality 报告无法校验/);
+      assert.doesNotMatch(page, /RejectedCandidate/);
+      assert.equal(page.includes('class="sq-time-tabs"'), paired);
+    }
+  }
+});
+
+test("NQ rejection migration preserves existing reports, SQ links, expiry and indexes", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "sq-report-migration-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const migrations = fileURLToPath(new URL("../migrations/", import.meta.url));
+  const upgrade = "0006_rejected_nq_reports.sql";
+  for (const name of readdirSync(migrations).filter(name => name.endsWith(".sql") && name < upgrade)) {
+    copyFileSync(join(migrations, name), join(directory, name));
+  }
+  const DB = new SQLiteDatabase(":memory:");
+  t.after(() => DB.close());
+  DB.migrate(directory);
+  const env = { DB, RATE_LIMIT_SALT: "test-only-report-identity-key", NODEQUALITY_BINDING_ENABLED: "true" };
+  const original = await create(env, { traffic_rx_bytes: "253540000", traffic_tx_bytes: "368410000" });
+  const { token } = await (await preflight(env, original.url)).json();
+  const timestamp = now();
+  await create(env, {
+    sq_preflight_token: token, bind_status: "verified_stale",
+    tested_at: String(timestamp), nq_tested_at: String(timestamp - 86400), time_gap_seconds: "86400",
+    nq_url: "https://nodequality.com/r/OriginalNQReport", nq_identity_reason: "masked_ip_and_asn",
+  });
+  const rows = () => DB.prepare("SELECT * FROM reports ORDER BY id").all();
+  const before = (await rows()).results;
+  const columns = (await DB.prepare("PRAGMA table_info(reports)").all()).results;
+  copyFileSync(join(migrations, upgrade), join(directory, upgrade));
+  DB.migrate(directory);
+  DB.migrate(directory);
+  assert.deepEqual((await rows()).results, before);
+  assert.deepEqual((await DB.prepare("PRAGMA table_info(reports)").all()).results, columns);
+  assert.equal((await DB.prepare("PRAGMA integrity_check").first()).integrity_check, "ok");
+  assert.equal((await DB.prepare("SELECT name FROM sqlite_master WHERE name = 'reports_expires_at_idx'").first()).name,
+    "reports_expires_at_idx");
+  await create(env, { bind_status: "mismatch", sq_preflight_token: token });
+  await create(env, { bind_status: "unverified" });
+  await assert.rejects(DB.prepare("UPDATE reports SET bind_status = 'invalid'").run(), /CHECK constraint failed/);
 });
 
 test("preflight rejects legacy, expired, foreign, mismatched, and multiple sources", async (t) => {
