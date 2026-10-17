@@ -174,6 +174,7 @@ func progressTips(nodeQualityEnabled bool) []usageTip {
 		{"测速结束后自动清理本次临时文件", 1},
 		{"用 -l 查看地区代码，-h 查看完整用法", 1},
 		{"用 --sq 链接关联 1 份历史 SQ，含本次最多 2 份", 4},
+		{"--sq 联合链接可在终端选择保留哪份，只需再测一次", 2},
 	}
 	if nodeQualityEnabled {
 		tips = append(tips, usageTip{"--nq 多份候选先校验身份，再选距本次测速最近的一份", 8})

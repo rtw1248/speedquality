@@ -2,9 +2,9 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.6.2"
+readonly SPEEDQUALITY_VERSION="1.7.0"
 # Keep direct GitHub runs in sync with the signed release and deployed platform.
-readonly FALLBACK_PROBE_VERSION="v1.6.2"
+readonly FALLBACK_PROBE_VERSION="v1.7.0"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -37,6 +37,7 @@ PROBE_BASE="${SPEEDQUALITY_PROBE_BASE:-}"
 
 NODEQUALITY_URL=""
 SQ_REPORT_URL=""
+SQ_KEEP=""
 SQ_PREFLIGHT_TOKEN=""
 SQ_NODEQUALITY_URL=""
 declare -a NQ_CANDIDATE_URLS=() NQ_VERIFIED_URLS=() NQ_VERIFIED_EPOCHS=()
@@ -160,7 +161,8 @@ SpeedQuality 选项:
   -v4, --ipv4             仅测试 IPv4；默认自动测试可用的 IPv4 和 IPv6
   -v6, --ipv6             仅测试 IPv6；不能与 -v4 同时使用
   -i, --interactive       手动选择地区、测速档位和报告关联；默认直接测速
-      --sq URL            关联 1 份历史 SQ，含本次最多 2 份；测速前校验，不支持继续叠加
+      --sq URL            关联历史 SQ；联合链接会在测速前选择保留哪一份，含本次最多 2 份
+      --sq-keep 1|2       自动运行时指定保留项：1 为联合报告中的历史 SQ，2 为该报告的本次 SQ
       --nq URL            关联 NQ；多份候选先校验身份，选择距本次测速时间最近的一份
       --node ROUTE_KEY    精确使用自己的 SQ 节点；不传 -p 时采用节点登记省份
       --allow-parallel    检测到其他 SQ 任务时直接继续，仍受平台并发限制
@@ -940,6 +942,19 @@ parse_args() {
         [[ -n "$SQ_REPORT_URL" ]] || die "--sq 需要 SQ 报告链接"
         shift
         ;;
+      --sq-keep)
+        require_value "$1" "$#"
+        [[ -z "$SQ_KEEP" ]] || die "--sq-keep 只能指定一次"
+        [[ "$2" == 1 || "$2" == 2 ]] || die "--sq-keep 只支持 1 或 2"
+        SQ_KEEP="$2"
+        shift 2
+        ;;
+      --sq-keep=*)
+        [[ -z "$SQ_KEEP" ]] || die "--sq-keep 只能指定一次"
+        SQ_KEEP="${1#*=}"
+        [[ "$SQ_KEEP" == 1 || "$SQ_KEEP" == 2 ]] || die "--sq-keep 只支持 1 或 2"
+        shift
+        ;;
       --node)
         require_value "$1" "$#"
         NODE_ROUTE_KEY="$2"
@@ -986,6 +1001,7 @@ parse_args() {
   if [[ -n "$NODE_ROUTE_KEY" && ! "$NODE_ROUTE_KEY" =~ ^sqn_[A-Za-z0-9_-]{24,96}$ ]]; then
     die "--node Route Key 格式无效"
   fi
+  [[ -z "$SQ_KEEP" || -n "$SQ_REPORT_URL" ]] || die "--sq-keep 需要同时提供 --sq 联合报告链接"
 }
 
 normalize_nodequality_url() {
@@ -1270,39 +1286,90 @@ bind_nodequality_result() {
   esac
 }
 
+select_sq_report() {
+  local response_file="$1" first second first_available second_available answer
+  first=$(json_string_field "$response_file" choice_1_label)
+  second=$(json_string_field "$response_file" choice_2_label)
+  first_available=$(json_number_field "$response_file" choice_1_available)
+  second_available=$(json_number_field "$response_file" choice_2_available)
+  [[ -n "$first" && -n "$second" && "$first_available" =~ ^[01]$ && "$second_available" == 1 ]] \
+    || die "SQ 关联预检返回无效选项；测速尚未开始"
+  printf '\n' >&2
+  if [[ -t 0 ]]; then
+    warn "需要手动选择：测速尚未开始，正在等待你的输入。"
+  fi
+  printf '该联合报告包含 2 份 SQ，请选择要保留的一份：\n' >&2
+  printf '  1) %s（历史 SQ）\n  2) %s（该报告的本次 SQ）\n' "$first" "$second" >&2
+  printf '  保留所选 SQ，再运行一次新测速，生成新的两份对照报告。\n' >&2
+  if [[ ! -t 0 ]]; then
+    die "非交互运行需要明确选择：在原命令后加 --sq-keep 1 或 --sq-keep 2；测速尚未开始"
+  fi
+  printf '  输入 1 或 2 后按回车继续；输入 0 取消本次测速。\n' >&2
+  while :; do
+    printf '  请选择要保留的 SQ [1/2，0 取消]: ' >&2
+    IFS= read -r answer || die "已取消本次测速；测速尚未开始"
+    case "$answer" in
+      1|2)
+        if [[ "$answer" == 1 && "$first_available" == 0 ]]; then
+          warn "第 1 份 SQ 已过期或不可用，请选择第 2 份，或输入 0 取消"
+          continue
+        fi
+        SQ_KEEP="$answer"
+        return 0
+        ;;
+      0) info "已取消本次测速；测速尚未开始"; exit 0 ;;
+      *) warn "请输入 1 或 2 选择要保留的 SQ，输入 0 取消" ;;
+    esac
+  done
+}
+
 preflight_sq_report() {
   [[ -n "$SQ_REPORT_URL" ]] || return 0
   validate_https_url "$REPORT_BASE" || die "分享服务地址无效；测速尚未开始"
-  local response_file="$TEMP_DIR/sq-preflight.json" status error_code message source_id curl_family
+  local response_file="$TEMP_DIR/sq-preflight.json" status error_code message source_id curl_family attempt selected_label
   local -a families=("$PRIMARY_CURL_FAMILY")
+  local -a selection_args=()
   if [[ "$RUN_FAMILIES" == *v4* && "$RUN_FAMILIES" == *v6* ]]; then
     if [[ "$PRIMARY_CURL_FAMILY" == "-4" ]]; then families+=(-6); else families+=(-4); fi
   fi
   info "--sq 最多关联 1 份历史 SQ，含本次共 2 份；正在进行测速前校验"
-  for curl_family in "${families[@]}"; do
-    if ! status=$(curl "$curl_family" --proto '=https' --tlsv1.2 -sS \
-      --connect-timeout 8 --max-time 20 --write-out '%{http_code}' \
-      --data-urlencode "sq_url=$SQ_REPORT_URL" \
-      "${REPORT_BASE%/}/api/reports/preflight" -o "$response_file"); then
-      die "无法完成 SQ 关联预检；测速尚未开始，请稍后重试或去掉 --sq"
+  # At most one selection and one follow-up request; each may try both exits.
+  for attempt in 1 2; do
+    selection_args=()
+    if [[ -n "$SQ_KEEP" ]]; then selection_args=(--data-urlencode "sq_keep=$SQ_KEEP"); fi
+    for curl_family in "${families[@]}"; do
+      if ! status=$(curl "$curl_family" --proto '=https' --tlsv1.2 -sS \
+        --connect-timeout 8 --max-time 20 --write-out '%{http_code}' \
+        --data-urlencode "sq_url=$SQ_REPORT_URL" "${selection_args[@]}" \
+        "${REPORT_BASE%/}/api/reports/preflight" -o "$response_file"); then
+        die "无法完成 SQ 关联预检；测速尚未开始，请稍后重试或去掉 --sq"
+      fi
+      if [[ "$status" == "200" ]]; then
+        SQ_PREFLIGHT_TOKEN=$(json_string_field "$response_file" token)
+        [[ "$SQ_PREFLIGHT_TOKEN" =~ ^[A-Za-z0-9_-]+\.[a-f0-9]{64}$ ]] \
+          || die "SQ 关联预检返回无效凭据；测速尚未开始"
+        SQ_NODEQUALITY_URL=$(json_string_field "$response_file" nq_url)
+        selected_label=$(json_string_field "$response_file" selected_label)
+        if [[ -n "$selected_label" ]]; then success "已选择保留：$selected_label"; fi
+        success "SQ 关联预检通过：一份历史 SQ 加本次测速，共 2 份"
+        if [[ -n "$SQ_KEEP" ]]; then success "选择完成，开始准备测速"; fi
+        return 0
+      fi
+      error_code=$(json_string_field "$response_file" error)
+      [[ "$error_code" == "source_identity_mismatch" ]] || break
+    done
+    if [[ "$status" == 409 && "$error_code" == sq_selection_required && -z "$SQ_KEEP" && "$attempt" == 1 ]]; then
+      select_sq_report "$response_file"
+    else
+      break
     fi
-    if [[ "$status" == "200" ]]; then
-      SQ_PREFLIGHT_TOKEN=$(json_string_field "$response_file" token)
-      [[ "$SQ_PREFLIGHT_TOKEN" =~ ^[A-Za-z0-9_-]+\.[a-f0-9]{64}$ ]] \
-        || die "SQ 关联预检返回无效凭据；测速尚未开始"
-      SQ_NODEQUALITY_URL=$(json_string_field "$response_file" nq_url)
-      success "SQ 关联预检通过：一份历史 SQ 加本次测速，共 2 份"
-      return 0
-    fi
-    error_code=$(json_string_field "$response_file" error)
-    [[ "$error_code" == "source_identity_mismatch" ]] || break
   done
   message=$(json_string_field "$response_file" message)
   source_id=$(json_string_field "$response_file" source_id)
   if [[ "$source_id" =~ ^[A-Za-z0-9_-]{12}$ ]]; then
     info "可改用其中的原始单份报告：${REPORT_BASE%/}/r/$source_id"
   fi
-  die "${message:-SQ 关联预检失败（HTTP $status）}；测速尚未开始。请更换单份报告链接或去掉 --sq"
+  die "${message:-SQ 关联预检失败（HTTP $status）}；测速尚未开始。请检查链接和保留选项，或去掉 --sq"
 }
 
 configure_nodequality_candidates() {

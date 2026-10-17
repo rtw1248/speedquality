@@ -11,6 +11,7 @@ write_out=""
 response_status="200"
 tested_at=""
 nq_url=""
+sq_keep=""
 noproxy=""
 fail_on_http=0
 
@@ -45,6 +46,8 @@ while (($#)); do
         tested_at="${2#tested_at=}"
       elif [[ "$2" == nq_url=* ]]; then
         nq_url="${2#nq_url=}"
+      elif [[ "$2" == sq_keep=* ]]; then
+        sq_keep="${2#sq_keep=}"
       fi
       shift 2
       ;;
@@ -71,7 +74,18 @@ case "$url" in
   */api/reports/preflight)
     printf 'sq-preflight %s\n' "$curl_family" >> "$MOCK_PLATFORM_LOG"
     response_status="${MOCK_SQ_PREFLIGHT_STATUS:-200}"
-    if [[ -n "${MOCK_SQ_PREFLIGHT_RESPONSE:-}" ]]; then
+    if [[ -n "$sq_keep" && -n "${MOCK_SQ_SELECTION_RESPONSE:-}" ]]; then
+      printf 'sq-keep %s %s\n' "$sq_keep" "$curl_family" >> "$MOCK_PLATFORM_LOG"
+      response_status=200
+      printf '{"token":"e30.%064d","nq_url":"%s","selected_label":"SQ %s"}\n' 0 "${MOCK_SQ_NQ_URL:-}" "$sq_keep" > "$output_file"
+      if [[ "${MOCK_SQ_V6_ONLY:-0}" == 1 && "$curl_family" == -4 ]]; then
+        response_status=403
+        printf '{"error":"source_identity_mismatch","message":"出口身份不匹配"}\n' > "$output_file"
+      fi
+    elif [[ -n "${MOCK_SQ_SELECTION_RESPONSE:-}" ]]; then
+      response_status=409
+      cp -- "$MOCK_SQ_SELECTION_RESPONSE" "$output_file"
+    elif [[ -n "${MOCK_SQ_PREFLIGHT_RESPONSE:-}" ]]; then
       cp -- "$MOCK_SQ_PREFLIGHT_RESPONSE" "$output_file"
     else
       printf '{"token":"e30.%064d","nq_url":"%s"}\n' 0 "${MOCK_SQ_NQ_URL:-}" > "$output_file"

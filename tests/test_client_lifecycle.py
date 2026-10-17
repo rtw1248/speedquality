@@ -93,10 +93,10 @@ class ClientLifecycle(unittest.TestCase):
         self.wait_file(self.base / "started.txt")
         return task, Path((self.base / "started.txt").read_text().strip())
 
-    def tty_client(self, answer):
+    def tty_client(self, answer, args=None, changes=None, prompt="是否继续并行测速？"):
         master, slave = pty.openpty()
-        task = subprocess.Popen(["bash", str(RUNNER), "-p", "hb,bj", "-s", "100"],
-                                env=self.environment, stdin=slave, stdout=slave, stderr=slave,
+        task = subprocess.Popen(["bash", str(RUNNER)] + (args or ["-p", "hb,bj", "-s", "100"]),
+                                env=dict(self.environment, **(changes or {})), stdin=slave, stdout=slave, stderr=slave,
                                 start_new_session=True)
         os.close(slave)
         data = b""
@@ -113,12 +113,17 @@ class ClientLifecycle(unittest.TestCase):
                     if not chunk:
                         break
                     data += chunk
-                if not sent and "是否继续并行测速？".encode() in data:
+                if not sent and prompt.encode() in data:
                     os.write(master, answer.encode())
                     sent = True
                 if task.poll() is not None and not ready:
                     break
             self.assertTrue(sent, data.decode(errors="replace"))
+            if task.poll() is None:
+                try:
+                    task.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.fail("launcher did not finish:\n" + data.decode(errors="replace"))
             return task.wait(timeout=3), data.decode(errors="replace")
         finally:
             if task.poll() is None:
@@ -174,6 +179,86 @@ class ClientLifecycle(unittest.TestCase):
         self.assertLess(log.index("sq-preflight"), log.index("download-probe"))
         self.assertIn("共 2 份", result.stdout)
         self.assert_clean()
+
+    def sq_selection_settings(self, first_available=1):
+        response = self.base / "sq-choices.json"
+        response.write_text(json.dumps({
+            "error": "sq_selection_required", "message": "选择要保留的 SQ",
+            "choice_1_label": "2026/10/16 08:02:03（北京时间） | 湖北、北京 | 100 Mbps | IPv4 + IPv6",
+            "choice_2_label": "2026/10/17 22:04:05（北京时间） | 广东 | 400 Mbps | IPv6",
+            "choice_1_available": first_available, "choice_2_available": 1,
+        }, ensure_ascii=False))
+        return {"MOCK_SQ_SELECTION_RESPONSE": str(response)}
+
+    def test_joint_sq_can_keep_either_measurement_from_the_terminal(self):
+        args = ["-p", "hb", "-s", "100", "-v4", "--sq", "https://reports.example/r/AbCdEfGhIjKl"]
+        for answer in ["invalid\n\n1\n", "2\n"]:
+            keep = answer.strip()[-1]
+            with self.subTest(keep=keep):
+                (self.base / "platform.log").unlink(missing_ok=True)
+                (self.base / "args.txt").unlink(missing_ok=True)
+                status, output = self.tty_client(answer, args, self.sq_selection_settings(), "请选择要保留的 SQ")
+                self.assertEqual(status, 0, output)
+                self.assertIn("需要手动选择：测速尚未开始，正在等待你的输入", output)
+                self.assertIn("输入 1 或 2 后按回车继续", output)
+                self.assertIn("2026/10/16 08:02:03（北京时间） | 湖北、北京 | 100 Mbps | IPv4 + IPv6", output)
+                self.assertIn("2026/10/17 22:04:05（北京时间） | 广东 | 400 Mbps | IPv6", output)
+                self.assertIn(f"已选择保留：SQ {keep}", output)
+                self.assertIn("选择完成，开始准备测速", output)
+                log = (self.base / "platform.log").read_text()
+                self.assertEqual(log.count("sq-preflight"), 2)
+                self.assertLess(log.index(f"sq-keep {keep}"), log.index("download-probe"))
+                self.assertEqual(len((self.base / "args.txt").read_text().splitlines()), 1)
+                self.assertIn("分享报告", output)
+                self.assert_clean()
+
+    def test_joint_sq_noninteractive_requires_an_explicit_selection(self):
+        args = ["-p", "hb", "-s", "100", "-v4", "--sq", "https://reports.example/r/AbCdEfGhIjKl"]
+        settings = self.sq_selection_settings()
+        result = self.run_client(args, settings)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("--sq-keep 1 或 --sq-keep 2", result.stdout)
+        self.assertNotIn("download-probe", (self.base / "platform.log").read_text())
+        self.assertFalse((self.base / "started.txt").exists())
+        self.assert_clean()
+        for keep in [["--sq-keep", "1"], ["--sq-keep=2"]]:
+            result = self.run_client(args + keep, settings)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn("已选择保留：SQ", result.stdout)
+            self.assert_clean()
+
+    def test_joint_sq_expired_choice_and_cancel_do_not_start_measurements(self):
+        args = ["-p", "hb", "-s", "100", "-v4", "--sq", "https://reports.example/r/AbCdEfGhIjKl"]
+        status, output = self.tty_client("1\n0\n", args, self.sq_selection_settings(first_available=0),
+                                         "请选择要保留的 SQ")
+        self.assertEqual(status, 0, output)
+        self.assertIn("第 1 份 SQ 已过期或不可用", output)
+        self.assertIn("已取消本次测速", output)
+        log = (self.base / "platform.log").read_text()
+        self.assertNotIn("download-probe", log)
+        self.assertNotIn("session ", log)
+        self.assertFalse((self.base / "started.txt").exists())
+        self.assert_clean()
+
+    def test_joint_sq_selection_checks_both_authenticated_exits(self):
+        args = ["-p", "hb", "-s", "100", "--sq", "https://reports.example/r/AbCdEfGhIjKl"]
+        status, output = self.tty_client("2\n", args, dict(self.sq_selection_settings(), MOCK_SQ_V6_ONLY="1"),
+                                         "请选择要保留的 SQ")
+        self.assertEqual(status, 0, output)
+        log = (self.base / "platform.log").read_text()
+        self.assertIn("sq-keep 2 -4", log)
+        self.assertIn("sq-keep 2 -6", log)
+        self.assertLess(log.index("sq-keep 2 -6"), log.index("download-probe"))
+        self.assertEqual(output.count("请选择要保留的 SQ"), 1)
+        self.assert_clean()
+
+    def test_sq_keep_validation_stops_before_network_requests(self):
+        for invalid in [["--sq-keep", "1"], ["--sq-keep=3"], ["--sq-keep="],
+                        ["--sq-keep", "1", "--sq-keep", "2"]]:
+            result = self.run_client(["-p", "hb"] + invalid)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertFalse((self.base / "platform.log").exists())
+            self.assert_clean()
 
     def test_linked_nq_candidates_are_verified_then_nearest_is_selected(self):
         direct = "DirectNQReportToken1234"

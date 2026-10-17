@@ -24,7 +24,7 @@ bash <(curl -fsSL https://sq.yolo2.cc/run)
 - **比较不同时段的节点**。报告显示“武汉电信1号（IPv4）”这样的固定节点名称和来源，早晚对比时可以先确认是否测到同一端点。
 - **测完就能分享**。终端直接看彩色结果，网页报告适配手机；支持复制文本、NodeSeek和Markdown格式，报告链接可在Telegram等平台展示预览图。
 - **与NodeQuality放在一起看**。通过`--nq`关联已有NQ报告，校验服务器身份并提示检测时间差，在原有分页后追加“速度质量”。
-- **对照早晚测速**。`--sq`关联1份历史SQ，含本次最多2份，测速前检查；按北京时间的一天内时刻排列。若有多个NQ候选，先校验身份，再选距本次测速时间最近的一份。
+- **对照早晚测速**。`--sq`关联1份历史SQ，含本次最多2份；传入联合链接时，终端列出时间、省份、档位和IP类型，选择保留哪份后只需再测一次。报告按北京时间的一天内时刻排列。若有多个NQ候选，先校验身份，再选距本次测速时间最近的一份。
 - **查看覆盖，也能贡献节点**。节点地图展示各地区、运营商的近期覆盖；可部署`sq-node`公开共享，或通过Route Key定向使用自己的节点。
 
 ## 常用命令
@@ -39,7 +39,7 @@ bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb,bsg
 # 关联已有NodeQuality报告，将链接替换为你的报告地址
 bash <(curl -fsSL https://sq.yolo2.cc/run) --nq https://nodequality.com/r/REPORT_TOKEN
 
-# 关联一份历史SQ，对照早晚结果；已有两份SQ的链接不能继续叠加
+# 关联历史SQ；已有两份SQ时，在终端选择保留哪份，只需再测一次
 bash <(curl -fsSL https://sq.yolo2.cc/run) -p hb --sq https://sq.yolo2.cc/r/REPORT_ID
 ```
 

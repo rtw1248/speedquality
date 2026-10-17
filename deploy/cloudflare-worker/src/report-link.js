@@ -29,6 +29,27 @@ function failure(error, message, status, extra = {}) {
   return response({ error, message, sq_limit: SQ_REPORT_LIMIT, ...extra }, status);
 }
 
+function selectionLabel(report) {
+  const time = Number.isSafeInteger(report.tested_at) && report.tested_at > 0
+    ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit",
+      day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+      .format(new Date(report.tested_at * 1000)) + "（北京时间）" : "检测时间未知";
+  // Labels are printed in a terminal before the probe is downloaded. Keep them
+  // on one line and compatible with the launcher's dependency-free JSON reader.
+  const regions = String(report.regions || "省份未知")
+    .replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069"\\]/g, " ").slice(0, 160);
+  const speed = [100, 200, 400].includes(report.target_mbps) ? `${report.target_mbps} Mbps` : "档位未知";
+  let families = [];
+  try {
+    const data = JSON.parse(report.speed_data || "[]");
+    families = (Array.isArray(data) ? data : [data]).map(entry => entry?.family);
+  } catch { /* Older text-only reports may not identify both address families. */ }
+  const protocols = ["v4", "v6"].filter(family => families.includes(family))
+    .map(family => family === "v4" ? "IPv4" : "IPv6").join(" + ") ||
+    (report.ip_mode === "v4" ? "IPv4" : report.ip_mode === "v6" ? "包含 IPv6" : "IP 类型未知");
+  return `${time} | ${regions} | ${speed} | ${protocols}`;
+}
+
 export async function preflightReportLink(request, env, identity) {
   if (!env.DB || !identity) return failure("link_unavailable", "报告关联服务暂不可用", 503);
   if (!request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded")) {
@@ -56,6 +77,11 @@ export async function preflightReportLink(request, env, identity) {
   const params = new URLSearchParams(body);
   const links = params.getAll("sq_url");
   if (links.length !== 1) return failure("too_many_links", "--sq 只能指定一个链接，合计最多 2 份 SQ（含本次）", 400);
+  const selections = params.getAll("sq_keep");
+  if (selections.length > 1 || (selections.length && !["1", "2"].includes(selections[0]))) {
+    return failure("invalid_selection", "--sq-keep 只支持 1 或 2", 400);
+  }
+  const keep = selections[0] || "";
   let sourceID;
   try {
     const url = new URL(links[0]);
@@ -66,11 +92,26 @@ export async function preflightReportLink(request, env, identity) {
     return failure("invalid_link", "请使用当前 SQ 平台的报告链接", 400);
   }
   const now = Math.floor(Date.now() / 1000);
-  const report = await env.DB.prepare("SELECT * FROM reports WHERE id = ? AND expires_at > ?").bind(sourceID, now).first();
-  if (!report) return failure("source_unavailable", "SQ 报告不存在或已过期", 404);
-  if (report.sq_source_id) {
-    return failure("sq_limit_exceeded", "该链接已包含 2 份 SQ，不能继续叠加；--sq 仅能关联一份历史报告", 409,
-      { source_id: report.sq_source_id });
+  const root = await env.DB.prepare("SELECT * FROM reports WHERE id = ? AND expires_at > ?").bind(sourceID, now).first();
+  if (!root) return failure("source_unavailable", "SQ 报告不存在或已过期", 404);
+  let report = root;
+  if (root.sq_source_id) {
+    const historical = await env.DB.prepare("SELECT * FROM reports WHERE id = ? AND expires_at > ?")
+      .bind(root.sq_source_id, now).first();
+    if (!keep) {
+      return failure("sq_selection_required", "该链接包含 2 份 SQ，请选择要保留的一份；新版脚本可在终端选择", 409, {
+        version: 1, source_id: root.sq_source_id,
+        choice_1_label: historical ? selectionLabel(historical)
+          : selectionLabel({ tested_at: root.sq_source_tested_at }) + "（已过期或不可用）",
+        choice_1_available: historical ? 1 : 0,
+        choice_2_label: selectionLabel(root), choice_2_available: 1,
+      });
+    }
+    report = keep === "1" ? historical : root;
+    if (!report) return failure("source_unavailable", "选择保留的 SQ 已过期或不可用，请选择另一份", 404);
+    sourceID = report.id;
+  } else if (keep) {
+    return failure("invalid_selection", "该链接只有 1 份 SQ，无需使用 --sq-keep", 400);
   }
   let identities;
   try { identities = JSON.parse(report.source_identity_hashes || "[]"); } catch { identities = []; }
@@ -87,8 +128,9 @@ export async function preflightReportLink(request, env, identity) {
   const payload = btoa(JSON.stringify(plan)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
   const signature = hex(await crypto.subtle.sign("HMAC", await key(env), encoder.encode(`sq-link-plan-v1:${payload}`)));
   return response({ version: 1, sq_limit: SQ_REPORT_LIMIT, sq_count: 2,
-    token: `${payload}.${signature}`, nq_url: report.nq_url || "",
-    message: "--sq 预检通过：一份历史 SQ 加本次测速，共 2 份；不支持继续叠加" });
+    token: `${payload}.${signature}`, nq_url: root.nq_url || report.nq_url || "",
+    selected_id: report.id, selected_label: selectionLabel(report),
+    message: "--sq 预检通过：保留所选 SQ，与本次新测速组成 2 份对照" });
 }
 
 export async function verifyReportLink(token, env, identities) {

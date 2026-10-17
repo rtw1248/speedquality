@@ -44,10 +44,11 @@ async function create(env, overrides = {}) {
   const url = (await response.text()).trim();
   return { url, id: url.split("/").at(-1) };
 }
-const preflight = (env, url, ip = address) => worker.fetch(post("/api/reports/preflight", { sq_url: url }, ip), env);
+const preflight = (env, url, ip = address, keep = "") => worker.fetch(post("/api/reports/preflight",
+  { sq_url: url, ...(keep ? { sq_keep: keep } : {}) }, ip), env);
 const read = (env, id) => env.DB.prepare("SELECT * FROM reports WHERE id = ? AND expires_at > ?").bind(id, now()).first();
 
-test("SQ identity is private, preflight binds one original report, and a pair cannot grow", async (t) => {
+test("SQ identity stays private and a pair lets either measurement be reused without growing", async (t) => {
   const env = environment(t);
   const original = await create(env);
   const stored = await read(env, original.id);
@@ -62,12 +63,106 @@ test("SQ identity is private, preflight binds one original report, and a pair ca
   const linked = await read(env, combined.id);
   assert.equal(linked.sq_source_id, original.id);
   assert.equal((await read(env, original.id)).sq_source_id, "");
-  const rejected = await preflight(env, combined.url);
-  assert.equal(rejected.status, 409);
-  assert.equal((await rejected.json()).error, "sq_limit_exceeded");
+  const choose = await preflight(env, combined.url);
+  assert.equal(choose.status, 409);
+  const choices = await choose.json();
+  assert.equal(choices.error, "sq_selection_required");
+  assert.equal(choices.choice_1_available, 1);
+  assert.equal(choices.choice_2_available, 1);
+  assert.match(choices.choice_1_label, /北京时间.*湖北.*200 Mbps.*IPv4/);
+  assert.match(choices.choice_2_label, /北京时间.*湖北.*200 Mbps.*IPv4/);
+  assert.equal(choices.token, undefined);
+  for (const [keep, retained, omitted] of [["1", original.id, combined.id], ["2", combined.id, original.id]]) {
+    const selected = await preflight(env, combined.url, address, keep);
+    assert.equal(selected.status, 200);
+    const plan = await selected.json();
+    assert.equal(plan.selected_id, retained);
+    const next = await create(env, { sq_preflight_token: plan.token });
+    assert.equal((await read(env, next.id)).sq_source_id, retained);
+    const page = await (await worker.fetch(new Request(`${next.url}?tab=sq`), env)).text();
+    const nav = page.match(/<nav class="sq-time-tabs"[\s\S]*?<\/nav>/)[0];
+    assert.equal(nav.match(/<a /g).length, 2);
+    assert.match(nav, new RegExp(`sq=${retained}`));
+    assert.match(nav, new RegExp(`sq=${next.id}`));
+    assert.doesNotMatch(nav, new RegExp(omitted));
+    // Reusing B from B+C must still retain B alone, even though B links to A.
+    const again = await preflight(env, next.url, address, "1");
+    assert.equal(again.status, 200);
+    assert.equal((await again.json()).selected_id, retained);
+  }
+  assert.deepEqual(await read(env, original.id), stored);
+  assert.deepEqual(await read(env, combined.id), linked);
   const page = await (await worker.fetch(new Request(`${combined.url}?tab=sq`), env)).text();
   assert.match(page, /class="sq-time-tabs"/);
   assert.doesNotMatch(page, new RegExp(JSON.parse(stored.source_identity_hashes)[0]));
+});
+
+test("selection labels distinguish dates, multiple provinces, speed tiers and actual IP families", async (t) => {
+  const env = environment(t);
+  const original = await create(env);
+  const { token } = await (await preflight(env, original.url)).json();
+  const combined = await create(env, { sq_preflight_token: token });
+  const firstTime = Date.parse("2026-10-16T08:02:03+08:00") / 1000;
+  const secondTime = Date.parse("2026-10-17T22:04:05+08:00") / 1000;
+  await env.DB.prepare("UPDATE reports SET tested_at=?,regions=?,target_mbps=?,speed_data=?,ip_mode='v6' WHERE id=?")
+    .bind(firstTime, "湖北、北京", 100, JSON.stringify([{family:"v4"},{family:"v6"}]), original.id).run();
+  await env.DB.prepare("UPDATE reports SET tested_at=?,regions=?,target_mbps=?,speed_data=?,ip_mode='v6' WHERE id=?")
+    .bind(secondTime, "广东", 400, JSON.stringify([{family:"v6"}]), combined.id).run();
+  const choices = await (await preflight(env, combined.url)).json();
+  assert.equal(choices.choice_1_label, "2026/10/16 08:02:03（北京时间） | 湖北、北京 | 100 Mbps | IPv4 + IPv6");
+  assert.equal(choices.choice_2_label, "2026/10/17 22:04:05（北京时间） | 广东 | 400 Mbps | IPv6");
+  await env.DB.prepare("UPDATE reports SET regions=? WHERE id=?").bind('湖北\n\x1b[31m"\\\u202e', original.id).run();
+  const sanitized = await (await preflight(env, combined.url)).json();
+  assert.doesNotMatch(sanitized.choice_1_label, /[\n\x1b"\\\u202e]/);
+});
+
+test("pair selection checks the retained measurement identity and rejects invalid selections", async (t) => {
+  const env = environment(t);
+  const original = await create(env);
+  const { token } = await (await preflight(env, original.url)).json();
+  const combined = await create(env, { sq_preflight_token: token });
+  for (const value of ["0", "3", original.id]) {
+    assert.equal((await preflight(env, combined.url, address, value)).status, 400);
+  }
+  const fields = new URLSearchParams([["sq_url", combined.url], ["sq_keep", "1"], ["sq_keep", "2"]]);
+  assert.equal((await worker.fetch(post("/api/reports/preflight", fields), env)).status, 400);
+  assert.equal((await preflight(env, original.url, address, "1")).status, 400);
+  for (const keep of ["1", "2"]) {
+    assert.equal((await preflight(env, combined.url, "198.51.100.9", keep)).status, 403);
+  }
+  // The current exit may match A alone after a dual-stack exit changes for B.
+  await env.DB.prepare("UPDATE reports SET source_identity_hashes=? WHERE id=?")
+    .bind(JSON.stringify(["f".repeat(64)]), combined.id).run();
+  assert.equal((await preflight(env, combined.url, address, "1")).status, 200);
+  assert.equal((await preflight(env, combined.url, address, "2")).status, 403);
+  await env.DB.prepare("UPDATE reports SET source_identity_hashes='[]' WHERE id=?").bind(original.id).run();
+  assert.equal((await preflight(env, combined.url, address, "1")).status, 422);
+});
+
+test("an expired historical SQ cannot be selected but the joint report's own SQ can", async (t) => {
+  const env = environment(t);
+  const original = await create(env);
+  const { token } = await (await preflight(env, original.url)).json();
+  const combined = await create(env, { sq_preflight_token: token });
+  await env.DB.prepare("UPDATE reports SET expires_at=? WHERE id=?").bind(now() - 1, original.id).run();
+  const choices = await (await preflight(env, combined.url)).json();
+  assert.equal(choices.choice_1_available, 0);
+  assert.match(choices.choice_1_label, /已过期或不可用/);
+  assert.equal(choices.choice_2_available, 1);
+  assert.equal((await preflight(env, combined.url, address, "1")).status, 404);
+  assert.equal((await preflight(env, combined.url, address, "2")).status, 200);
+});
+
+test("replacing either SQ offers the joint report's NQ for fresh identity and time verification", async (t) => {
+  const env = environment(t);
+  const original = await create(env, { nq_url: "https://nodequality.com/r/OriginalNQReport", bind_status: "verified_time_unknown" });
+  const { token } = await (await preflight(env, original.url)).json();
+  const combined = await create(env, { sq_preflight_token: token,
+    nq_url: "https://nodequality.com/r/JointNQReport1234", bind_status: "verified_time_unknown" });
+  for (const keep of ["1", "2"]) {
+    const check = await (await preflight(env, combined.url, address, keep)).json();
+    assert.equal(check.nq_url, "https://nodequality.com/r/JointNQReport1234");
+  }
 });
 
 test("rejected NQ candidates still save standalone and paired SQ reports", async (t) => {
