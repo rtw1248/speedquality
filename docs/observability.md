@@ -78,6 +78,12 @@ sudo journalctl -u speedquality-node.service -o cat -n 200
 档位、总并发和公共槽位。失败请求还会记录稳定的 `reason`，例如
 `node_capacity_exhausted`、`public_quota_exhausted` 或 `specified_node_unavailable`。
 
+第三方节点连接或激活失败会记录 `node.preparation_failed`：`stage=connect` 表示客户端TCP建连失败，
+`activate` 表示节点激活失败，`preparation` 表示旧反馈只能确定失败在准备阶段。日志同时记录
+归类后的 `reason`、连续失败次数和冷却秒数，不包含节点地址或激活凭据。
+`lease.rejected` 的 `selection_reason` 进一步区分目录为空、候选处于冷却期、归属校验失败和容量不足。
+历史“没有可连接的候选节点”没有保留具体socket错误，不能仅凭该文案判断是超时、拒绝连接还是路径受限。
+
 生产环境可把 `LOG_LEVEL` 改为 `warn` 降低日志量；调查问题时改回 `info`。`off` 会关闭应用
 日志，不影响 Cloudflare 自身的请求指标。
 
