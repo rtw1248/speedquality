@@ -2,9 +2,9 @@
 
 set -Eeuo pipefail
 
-readonly SPEEDQUALITY_VERSION="1.7.0"
+readonly SPEEDQUALITY_VERSION="1.7.1"
 # Keep direct GitHub runs in sync with the signed release and deployed platform.
-readonly FALLBACK_PROBE_VERSION="v1.7.0"
+readonly FALLBACK_PROBE_VERSION="v1.7.1"
 readonly DEFAULT_PROBE_VERSION="__SPEEDQUALITY_PROBE_VERSION__"
 readonly PROBE_VERSION_PLACEHOLDER="__SPEEDQUALITY_""PROBE_VERSION__"
 readonly DEFAULT_NQ_BINDING_ENABLED="__SPEEDQUALITY_NQ_BINDING_ENABLED__"
@@ -162,7 +162,7 @@ SpeedQuality 选项:
   -v6, --ipv6             仅测试 IPv6；不能与 -v4 同时使用
   -i, --interactive       手动选择地区、测速档位和报告关联；默认直接测速
       --sq URL            关联历史 SQ；联合链接会在测速前选择保留哪一份，含本次最多 2 份
-      --sq-keep 1|2       自动运行时指定保留项：1 为联合报告中的历史 SQ，2 为该报告的本次 SQ
+      --sq-keep 1|2       自动运行时按终端选项编号指定保留哪份 SQ
       --nq URL            关联 NQ；多份候选先校验身份，选择距本次测速时间最近的一份
       --node ROUTE_KEY    精确使用自己的 SQ 节点；不传 -p 时采用节点登记省份
       --allow-parallel    检测到其他 SQ 任务时直接继续，仍受平台并发限制
@@ -1299,7 +1299,7 @@ select_sq_report() {
     warn "需要手动选择：测速尚未开始，正在等待你的输入。"
   fi
   printf '该联合报告包含 2 份 SQ，请选择要保留的一份：\n' >&2
-  printf '  1) %s（历史 SQ）\n  2) %s（该报告的本次 SQ）\n' "$first" "$second" >&2
+  printf '  1) %s\n  2) %s\n' "$first" "$second" >&2
   printf '  保留所选 SQ，再运行一次新测速，生成新的两份对照报告。\n' >&2
   if [[ ! -t 0 ]]; then
     die "非交互运行需要明确选择：在原命令后加 --sq-keep 1 或 --sq-keep 2；测速尚未开始"
