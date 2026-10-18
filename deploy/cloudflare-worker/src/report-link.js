@@ -79,7 +79,7 @@ export async function preflightReportLink(request, env, identity) {
   if (links.length !== 1) return failure("too_many_links", "--sq 只能指定一个链接，合计最多 2 份 SQ（含本次）", 400);
   const selections = params.getAll("sq_keep");
   if (selections.length > 1 || (selections.length && !["1", "2"].includes(selections[0]))) {
-    return failure("invalid_selection", "--sq-keep 只支持 1 或 2", 400);
+    return failure("invalid_selection", "请选择第 1 份或第 2 份 SQ", 400);
   }
   const keep = selections[0] || "";
   let sourceID;
@@ -111,7 +111,7 @@ export async function preflightReportLink(request, env, identity) {
     if (!report) return failure("source_unavailable", "选择保留的 SQ 已过期或不可用，请选择另一份", 404);
     sourceID = report.id;
   } else if (keep) {
-    return failure("invalid_selection", "该链接只有 1 份 SQ，无需使用 --sq-keep", 400);
+    return failure("invalid_selection", "该链接只有 1 份 SQ，无需选择保留项", 400);
   }
   let identities;
   try { identities = JSON.parse(report.source_identity_hashes || "[]"); } catch { identities = []; }

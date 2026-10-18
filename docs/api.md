@@ -332,7 +332,8 @@ Content-Type: application/json
 包含 `choice_1_label`、`choice_2_label`（北京时间、地区、Mbps 档位、实际 IP 类型），以及
 `choice_1_available`、`choice_2_available`（整数 `0/1`）。选项 1 是关联的历史 SQ，选项 2 是
 生成该联合报告时的新测速，编号不受页面排序影响。客户端展示选项后，使用同一 `sq_url` 和
-表单字段 `sq_keep=1` 或 `sq_keep=2` 再次请求；非交互客户端可直接传入该字段。
+表单字段 `sq_keep=1` 或 `sq_keep=2` 再次请求。Bash 入口在终端读取选择后自动提交该字段，
+用户只需使用 `--sq` 参数。
 字段使用扁平结构，使下载探针前的 Bash 入口无需安装 JSON 解析工具。
 
 只绑定选中的一份测速，不递归携带其历史关联；重复替换也始终只有两份。

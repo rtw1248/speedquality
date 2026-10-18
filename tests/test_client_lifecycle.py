@@ -212,20 +212,19 @@ class ClientLifecycle(unittest.TestCase):
                 self.assertIn("分享报告", output)
                 self.assert_clean()
 
-    def test_joint_sq_noninteractive_requires_an_explicit_selection(self):
+    def test_joint_sq_noninteractive_requires_a_terminal_before_measurement(self):
         args = ["-p", "hb", "-s", "100", "-v4", "--sq", "https://reports.example/r/AbCdEfGhIjKl"]
         settings = self.sq_selection_settings()
         result = self.run_client(args, settings)
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("--sq-keep 1 或 --sq-keep 2", result.stdout)
-        self.assertNotIn("download-probe", (self.base / "platform.log").read_text())
+        self.assertIn("需要在 SSH 终端手动选择", result.stdout)
+        self.assertIn("测速尚未开始", result.stdout)
+        self.assertNotIn("--sq-keep", result.stdout)
+        log = (self.base / "platform.log").read_text()
+        self.assertNotIn("download-probe", log)
+        self.assertNotIn("session ", log)
         self.assertFalse((self.base / "started.txt").exists())
         self.assert_clean()
-        for keep in [["--sq-keep", "1"], ["--sq-keep=2"]]:
-            result = self.run_client(args + keep, settings)
-            self.assertEqual(result.returncode, 0, result.stdout)
-            self.assertIn("已选择保留：SQ", result.stdout)
-            self.assert_clean()
 
     def test_joint_sq_expired_choice_and_cancel_do_not_start_measurements(self):
         args = ["-p", "hb", "-s", "100", "-v4", "--sq", "https://reports.example/r/AbCdEfGhIjKl"]
@@ -252,12 +251,15 @@ class ClientLifecycle(unittest.TestCase):
         self.assertEqual(output.count("请选择要保留的 SQ"), 1)
         self.assert_clean()
 
-    def test_sq_keep_validation_stops_before_network_requests(self):
-        for invalid in [["--sq-keep", "1"], ["--sq-keep=3"], ["--sq-keep="],
-                        ["--sq-keep", "1", "--sq-keep", "2"]]:
-            result = self.run_client(["-p", "hb"] + invalid)
+    def test_removed_sq_keep_option_stops_before_network_requests(self):
+        for option in [["--sq-keep", "1"], ["--sq-keep=2"], ["--sq-keep=3"], ["--sq-keep="]]:
+            result = self.run_client(["-p", "hb", "--sq", "https://reports.example/r/AbCdEfGhIjKl"] + option)
             self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("--sq-keep 参数已移除", result.stdout)
+            self.assertIn("在 SSH 终端按提示选择", result.stdout)
+            self.assertIn("测速尚未开始", result.stdout)
             self.assertFalse((self.base / "platform.log").exists())
+            self.assertFalse((self.base / "started.txt").exists())
             self.assert_clean()
 
     def test_linked_nq_candidates_are_verified_then_nearest_is_selected(self):
