@@ -441,12 +441,18 @@ Provider 应按物理节点而非逻辑标签控制并发，并根据 `target_mb
 
 `GET /nodes`提供公开节点地图；`GET /api/nodes/coverage`返回版本1的覆盖快照，支持HEAD，
 浏览器缓存60秒、边缘缓存300秒。不可用时返回503和`coverage_unavailable`，不返回伪造的空列表。
-该接口不执行测速、不查询用户来源、不返回节点地址或凭据。统计是近期观察到的公开端点，
+该接口不执行测速、不查询用户来源、不返回节点地址或凭据。统计包含累计点亮记录和近期观察到的公开端点，
 不是全国完整节点清单。教育网仅包含自建公开节点，`education_public_testing`始终为`false`。
 
-节点字段为`id, region, carrier, family, city, city_status, source, status, last_success_at,
-last_checked_at, public_testing`。`status`为`verified`或`pending`，近期成功窗口为7天；
-同一地址的目录别名和端口按IP协议去重。暂停、撤销和私有自建节点不展示，访问模式变更在最多5分钟缓存周期内生效。
+节点字段为`id, name, region, carrier, family, city, city_status, source, status, pending_reason,
+coverage_success_at, last_success_at, last_checked_at, public_testing`（名称和待确认原因按需返回）。
+`coverage_mode: "cumulative"`表示长期累计点亮；`coverage_success_at`为最近一次已经取得独立归属核验的
+成功测速时间（Unix秒），未取得确认时为`null`。已有点亮记录不会因时间流逝、后续失败或核验过期而清除。
+`status`仍描述近期状态，为`verified`或`pending`，`success_window_days: 7`只限制近期状态，不限制累计点亮。
+`last_success_at`是最近成功测速时间，不能单独证明归属核验通过。
+升级期间兼容旧Core快照，`coverage_mode: "recent"`时可沿用`status: "verified"`计入覆盖。
+同一地址的目录别名和端口按IP协议去重，明确归属冲突不参与点亮。撤销和私有自建节点不展示，
+访问模式变更在最多5分钟缓存周期内生效；近期健康状态不会覆盖历史点亮时间。
 
 租约和任务接口支持`X-SQ-Node-Info: 1`能力头，细节见[节点协议](node-protocol.md#可选节点快照v130)。
 上报结果可包含`node_used`和带签名的`node_info`。平台校验后只保存快照，丢弃签名；无效快照被移除。

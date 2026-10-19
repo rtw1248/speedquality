@@ -25,9 +25,9 @@ export function renderNodeMap(scriptNonce) {
       <div class="intro-aside"><span class="tiny-orbit">◎</span><div>每一个新节点<br><strong>都让测速多一个选择。</strong></div></div>
     </section>
     <section class="summary" aria-label="节点覆盖统计">
-      <div class="summary-main"><span class="stat-label">已点亮地区</span><div class="stat-value"><strong id="covered-count">—</strong><span>/ 31</span><span class="stat-unit">省级地区</span></div></div>
-      <div><span class="stat-label" id="complete-label">三网覆盖齐全</span><div class="stat-value"><strong id="complete-count">—</strong><span class="stat-unit">个地区</span></div></div>
-      <div><span class="stat-label">近期测速成功端点</span><div class="stat-value"><strong id="node-count">—</strong><span class="stat-unit">个</span></div></div>
+      <div class="summary-main"><span class="stat-label">累计点亮地区</span><div class="stat-value"><strong id="covered-count">—</strong><span>/ 31</span><span class="stat-unit">省级地区</span></div></div>
+      <div><span class="stat-label" id="complete-label">三网均已点亮</span><div class="stat-value"><strong id="complete-count">—</strong><span class="stat-unit">个地区</span></div></div>
+      <div><span class="stat-label">累计点亮端点</span><div class="stat-value"><strong id="node-count">—</strong><span class="stat-unit">个</span></div></div>
       <div class="summary-end"><span class="stat-label">还待点亮</span><div class="stat-value"><strong id="missing-count">—</strong><span class="stat-unit">个地区</span></div><div class="coverage-track"><span id="coverage-progress"></span></div></div>
     </section>
     <section class="explorer" aria-label="节点覆盖地图">
@@ -40,8 +40,8 @@ export function renderNodeMap(scriptNonce) {
         <div class="map-area">
           <div class="map-meta"><div><span class="live-dot"></span><span id="scope-label">公共节点 · IPv4 · 三网概览</span></div><span>点击省份查看详情</span><label class="region-picker"><span class="sr-only">选择地区</span><select id="region-picker" aria-label="选择地区"></select></label></div>
           <div class="map-canvas">${nodeMapGeometry}<div id="map-tooltip" class="map-tooltip" role="tooltip" hidden></div></div>
-          <div class="map-legend"><span><i class="legend-dot complete"></i><span id="complete-legend">三网齐全</span></span><span id="partial-legend"><i class="legend-dot partial"></i>部分覆盖</span><span><i class="legend-dot pending"></i>已收录</span><span><i class="legend-dot empty"></i>暂无记录</span></div>
-          <div class="map-footnote">第三方与公开自建节点均参与统计，IPv4、IPv6分别点亮。绿色表示归属核验有效且近期测速正常；黄色表示已收录但暂未满足条件。列表包含筛选时发现的候选节点，测速成功与归属核验分别记录；归属信息不一致可能来自节点目录或IP库误差。页面自动刷新，覆盖数据可能延迟数分钟。</div>
+          <div class="map-legend"><span><i class="legend-dot complete"></i><span id="complete-legend">三网已点亮</span></span><span id="partial-legend"><i class="legend-dot partial"></i>部分点亮</span><span><i class="legend-dot pending"></i>已收录</span><span><i class="legend-dot empty"></i>暂无记录</span></div>
+          <div class="map-footnote">点亮记录长期累计：公开节点通过归属核验并有成功测速后，即可点亮对应地区。超过7天未测速、后来测速失败或核验过期，都不会清除已确认的记录。IPv4、IPv6分别统计，节点列表展示最近状态；累计点亮不代表当前可用。归属纠错或节点转为私有时会调整展示。页面自动刷新，数据可能延迟数分钟。</div>
         </div>
         <aside class="region-panel" aria-label="所选地区详情" aria-live="polite">
           <div class="region-kicker"><span>REGION DETAILS</span></div>
@@ -56,7 +56,7 @@ export function renderNodeMap(scriptNonce) {
       <div class="contribution-symbol" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
       <div class="contribution-copy"><h2>从你所在的地方，点亮下一块地图。</h2><p>有可分享的宽带或服务器？完成节点接入与验证，就能为当地增加一个测速选择。</p></div><button class="button contribute">了解如何贡献<span>→</span></button>
     </section>
-    <footer><div><span class="footer-brand">SQ</span> 每一次测速，都有参照。</div><p>覆盖来自平台近期观察，未收录或尚未测速的地区不代表没有节点。地图边界：<a href="https://datav.aliyun.com/portal/school/atlas/area_selector" target="_blank" rel="noopener">DataV.GeoAtlas</a></p><span>每分钟自动检查更新</span></footer>
+    <footer><div><span class="footer-brand">SQ</span> 每一次测速，都有参照。</div><p>点亮记录来自平台累计测速与归属核验，未点亮不代表当地没有节点。地图边界：<a href="https://datav.aliyun.com/portal/school/atlas/area_selector" target="_blank" rel="noopener">DataV.GeoAtlas</a></p><span>每分钟自动检查更新</span></footer>
   </main>
   <dialog id="contribute-dialog">
     <button class="dialog-close" aria-label="关闭">×</button><span class="dialog-icon">✦</span><p class="eyebrow">LIGHT UP YOUR REGION</p><h2 id="dialog-title">为湖北补充一个节点</h2><p id="dialog-description">把你愿意公开共享的节点接入SQ，为所在地区增加一个测速选择。</p><div class="contribution-steps"><div><span>01</span><strong>准备节点</strong><p>确认所在地区、运营商和可分享的带宽。</p></div><div><span>02</span><strong>部署与验证</strong><p>安装sq-node，完成地址、网络归属与可用性验证。</p></div><div><span>03</span><strong>公开共享</strong><p>选择public公开展示，通过网络归属验证并完成测速后计入覆盖。</p></div></div><p class="dialog-note">私有节点不展示。教育网节点的public模式仅公开地图覆盖，测速仍需Route Key。请仅部署你有权管理和共享的网络。</p><a class="button primary" href="https://github.com/rtw1248/speedquality/blob/main/docs/sq-node.md" target="_blank" rel="noopener">查看节点部署文档<span>↗</span></a>

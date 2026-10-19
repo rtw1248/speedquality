@@ -28,7 +28,9 @@ export const nodeMapClient = `(() => {
   const filterCarriers = () => selected.carrier === 'all' ? ['ct','cu','cm'] : [selected.carrier];
   const visibleNodes = (region, carrier) => region.nodes.filter(node => node.carrier === carrier &&
     node.family === selected.family && (selected.source === 'all' || node.source === selected.source));
-  const successfulNodes = (region, carrier) => visibleNodes(region, carrier).filter(node => node.status === 'verified');
+  // Recent success also covers older Core snapshots during a rolling upgrade.
+  const isCovered = node => node.coverage_success_at > 0 || node.status === 'verified';
+  const successfulNodes = (region, carrier) => visibleNodes(region, carrier).filter(isCovered);
   function coverage(region) {
     if (!loaded) return {state:'loading',covered:0,count:0};
     if (!region.supported) return {state:'unsupported',covered:0,count:0};
@@ -40,7 +42,7 @@ export const nodeMapClient = `(() => {
       covered,count:counts.reduce((a,b)=>a+b,0)};
   }
   function stateLabel(state) {
-    return {complete:selected.carrier === 'all'?'三网齐全':'已覆盖',partial:'部分覆盖',pending:'已收录',
+    return {complete:selected.carrier === 'all'?'三网已点亮':'已点亮',partial:'部分点亮',pending:'已收录',
       empty:'暂无记录',unsupported:'暂未开放',loading:'等待数据'}[state];
   }
   function cityLabel(node) {
@@ -48,10 +50,11 @@ export const nodeMapClient = `(() => {
     return node.city || '';
   }
   function nodeStatusLabel(node) {
-    if (node.status === 'verified') return '已计入覆盖';
-    return {location_mismatch:'归属信息不一致，待核实',verification_pending:'归属核验尚未完成',
+    if (node.status === 'verified') return '已点亮 · 近7天测速正常';
+    const current = {location_mismatch:'归属信息不一致，待核实',verification_pending:'归属核验待确认',
       verification_expired:'归属核验已过期',node_unavailable:'节点当前不可用',no_success:'尚无成功测速',
       recent_failure:'最近一次测速未成功',success_expired:'近7天暂无成功测速'}[node.pending_reason] || '尚未满足点亮条件';
+    return (isCovered(node) ? '已点亮 · ' : '') + current;
   }
   function dateLabel(value) {
     return value ? new Date(value * 1000).toLocaleString('zh-CN',{hour12:false}) : '尚无成功记录';
@@ -78,8 +81,8 @@ export const nodeMapClient = `(() => {
       $(\`#\${id}\`).textContent = loaded ? value : '—';
     }
     $('#coverage-progress').style.width = \`\${loaded?coveredCount/31*100:0}%\`;
-    $('#complete-label').textContent = selected.carrier==='all'?'三网覆盖齐全':\`\${carrierNames[selected.carrier]}已覆盖\`;
-    $('#complete-legend').textContent = selected.carrier==='all'?'三网齐全':'已覆盖';
+    $('#complete-label').textContent = selected.carrier==='all'?'三网均已点亮':\`\${carrierNames[selected.carrier]}已点亮\`;
+    $('#complete-legend').textContent = selected.carrier==='all'?'三网已点亮':'已点亮';
     $('#partial-legend').style.display = selected.carrier==='all'?'flex':'none';
     $('#education-notice').hidden = selected.carrier !== 'edu';
     const sourceNames = {all:'公开端点',community:'社区贡献',third_party:'第三方节点'};
@@ -91,11 +94,11 @@ export const nodeMapClient = `(() => {
     $('#region-name').textContent = region.name;
     $('#region-badge').textContent = stateLabel(info.state);
     $('#region-subtitle').textContent = !loaded ? '等待覆盖数据' : !region.supported ? '暂未纳入公共分省测速范围' :
-      \`\${familyName()} · \${selected.carrier==='all'?\`三网覆盖\${info.covered}/3\`:\`\${carrierNames[selected.carrier]} · \${info.count}个已验证端点\`}\`;
+      \`\${familyName()} · \${selected.carrier==='all'?\`三网点亮\${info.covered}/3\`:\`\${carrierNames[selected.carrier]} · \${info.count}个已点亮端点\`}\`;
     const list = $('#carrier-list');
     list.replaceChildren();
     if (loaded) for (const carrier of selected.carrier==='all'?['ct','cu','cm','edu']:[selected.carrier]) {
-      const nodes = visibleNodes(region,carrier), verified = nodes.filter(node => node.status === 'verified');
+      const nodes = visibleNodes(region,carrier), verified = nodes.filter(isCovered);
       const state = verified.length?'verified':nodes.length?'pending':'empty';
       const row = element('div','carrier-row'), heading = element('div','carrier-heading'), title = element('div','carrier-name');
       title.append(element('i',\`carrier-dot \${state}\`),document.createTextNode(carrierNames[carrier]));
@@ -122,7 +125,7 @@ export const nodeMapClient = `(() => {
           details.append(identity);
         }
         row.append(details);
-      } else row.append(element('div','carrier-description',carrier==='edu'?'等待教育网节点加入':'暂无近期验证的公开节点'));
+      } else row.append(element('div','carrier-description',carrier==='edu'?'等待教育网节点加入':'暂无已收录的公开节点'));
       list.append(row);
     }
     if (focusedCarrier) $(\`details[data-carrier="\${focusedCarrier}"] summary\`)?.focus({preventScroll:true});

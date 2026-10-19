@@ -69,6 +69,30 @@ test('coverage whitelists public fields and hides unavailable data without inven
   assert.equal((html.match(/class="province"/g)||[]).length,34);
 });
 
+test('coverage preserves verified history independently of recent health and rejects invalid history', () => {
+  const now = Math.floor(Date.now() / 1000);
+  const data = { version: 1, generated_at: now, coverage_mode: 'cumulative', nodes: [{
+    id: 'a'.repeat(32), region: 'ha', carrier: 'ct', family: 'v4', city: '郑州', city_status: 'reported',
+    source: 'third_party', status: 'pending', pending_reason: 'recent_failure',
+    coverage_success_at: now - 366 * 86400, last_success_at: now - 366 * 86400,
+  }] };
+  const clean = sanitizeCoverage(data);
+  assert.equal(clean.coverage_mode, 'cumulative');
+  assert.equal(clean.nodes[0].coverage_success_at, now - 366 * 86400);
+  assert.equal(clean.nodes[0].status, 'pending');
+  assert.equal(clean.nodes[0].pending_reason, 'recent_failure');
+  for (const invalid of [-1, 0, now + 1, '123', NaN, Infinity]) {
+    data.nodes[0].coverage_success_at = invalid;
+    assert.equal(sanitizeCoverage(data).nodes[0].coverage_success_at, null);
+  }
+  data.nodes[0].coverage_success_at = now - 86400;
+  data.nodes[0].pending_reason = 'location_mismatch';
+  assert.equal(sanitizeCoverage(data).nodes[0].coverage_success_at, null);
+  delete data.coverage_mode;
+  delete data.nodes[0].coverage_success_at;
+  assert.equal(sanitizeCoverage(data).coverage_mode, 'recent', 'older Core snapshots remain readable during deployment');
+});
+
 test('friendly names require capability 2 and the signature binds the full name', async () => {
   const value = lease(); value.targets[0].candidates[0].node_info.name = '武汉电信1号';
   const legacy = structuredClone(value);

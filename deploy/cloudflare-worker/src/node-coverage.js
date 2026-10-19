@@ -17,11 +17,15 @@ export function sanitizeCoverage(value) {
     nodes.push({ id: node.id, region: node.region, carrier: node.carrier, family: node.family,
       ...info, status: node.status,
       ...(node.status === "pending" && pendingReasons.has(node.pending_reason) ? { pending_reason: node.pending_reason } : {}),
+      coverage_success_at: node.pending_reason !== "location_mismatch" &&
+        Number.isSafeInteger(node.coverage_success_at) && node.coverage_success_at > 0 && node.coverage_success_at <= value.generated_at
+        ? node.coverage_success_at : null,
       last_success_at: Number.isSafeInteger(node.last_success_at) && node.last_success_at > 0 ? node.last_success_at : null,
       last_checked_at: Number.isSafeInteger(node.last_checked_at) && node.last_checked_at > 0 ? node.last_checked_at : null,
       public_testing: node.carrier !== "edu" });
   }
-  return { version: 1, generated_at: value.generated_at, success_window_days: 7,
+  return { version: 1, generated_at: value.generated_at,
+    coverage_mode: value.coverage_mode === "cumulative" ? "cumulative" : "recent", success_window_days: 7,
     education_public_testing: false, nodes };
 }
 
@@ -29,7 +33,7 @@ export async function serveCoverage(request, env, context) {
   const headers = { "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff",
     "cache-control": "public, max-age=60, s-maxage=300" };
   if (!["GET", "HEAD"].includes(request.method)) return new Response(null, { status: 405, headers: { allow: "GET, HEAD" } });
-  const key = new Request(new URL("/api/nodes/coverage", request.url).href);
+  const key = new Request(new URL("/api/nodes/coverage?schema=cumulative-1", request.url).href);
   const cache = globalThis.caches?.default;
   let response = await cache?.match(key);
   if (!response) {
